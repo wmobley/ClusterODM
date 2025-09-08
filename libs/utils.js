@@ -63,6 +63,8 @@ module.exports = {
     cleanupTemporaryDirectory: async function(staleUploadsTimeout = 0){
         const self = this;
 
+        logger.info(`[TAPIS DEBUG] cleanupTemporaryDirectory called with timeout: ${staleUploadsTimeout}`);
+
         return new Promise((resolve, reject) => {
             fs.readdir('tmp', async (err, entries) => {
                 if (err) reject(err);
@@ -72,9 +74,19 @@ module.exports = {
 
                         let stale = false;
                         let tmpPath = path.join('tmp', entry);
+                        logger.info(`[TAPIS DEBUG] Checking directory for cleanup: ${tmpPath}`);
 
                         if (staleUploadsTimeout > 0){
                             try{
+                                // Check if directory has a Tapis upload lock file
+                                const lockFile = path.join(tmpPath, '.tapis_upload_in_progress');
+                                if (fs.existsSync(lockFile)) {
+                                    logger.info(`[TAPIS DEBUG] Skipping cleanup of ${tmpPath} - Tapis upload in progress`);
+                                    continue;
+                                } else {
+                                    logger.info(`[TAPIS DEBUG] No lock file found at ${lockFile}, proceeding with cleanup check`);
+                                }
+                                
                                 const fileCount = await self.filesCount(tmpPath);
     
                                 if (tmpUploadsMap[entry] === undefined){
@@ -161,6 +173,10 @@ module.exports = {
     },
 
     rmdir: function(dir){
+        logger.info(`[TAPIS DEBUG] DELETING DIRECTORY: ${dir}`);
+        const stack = new Error().stack;
+        logger.info(`[TAPIS DEBUG] Deletion called from: ${stack.split('\n').slice(1,4).join('\n')}`);
+        
         fs.exists(dir, exists => {
             if (exists){
                 this.rmfr(dir, err => {

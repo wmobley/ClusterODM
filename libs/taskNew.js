@@ -81,21 +81,108 @@ module.exports = {
 
         if (!fs.existsSync(tmpPath)) fs.mkdirSync(tmpPath);
 
+        // Track if response has been sent to prevent double responses
+        let responseSent = false;
+        
         return {
             uuid, 
             tmpPath,
             die: (err) => {
+                if (responseSent) {
+                    logger.warn(`[TAPIS DEBUG] Attempted to send response after already sent: ${err}`);
+                    return;
+                }
+                responseSent = true;
                 utils.rmdir(tmpPath);
                 utils.json(res, {error: err});
                 asrProvider.cleanup(uuid);
-            }
+            },
+            markResponseSent: () => {
+                responseSent = true;
+            },
+            isResponseSent: () => responseSent
         };
     },
 
     formDataParser: function(req, onFinish, options = {}){
+        logger.info(`[TAPIS DEBUG] formDataParser called with ${arguments.length} arguments`);
+        logger.info(`[TAPIS DEBUG] formDataParser arg[2] (options): ${JSON.stringify(arguments[2])}`);
+        
+        // TEMPORARY HACK: Force saveFilesToDir for Tapis debugging
+        if (req.url && req.url.includes('/task/new/init')) {
+            options = arguments[2] || {};
+            if (!options.saveFilesToDir) {
+                logger.info(`[TAPIS DEBUG] HACK: Forcing saveFilesToDir for /task/new/init`);
+                options.saveFilesToDir = "tmp/" + Math.random().toString(36).substr(2, 9);
+                const fs = require('fs');
+                if (!fs.existsSync(options.saveFilesToDir)) {
+                    fs.mkdirSync(options.saveFilesToDir, { recursive: true });
+                }
+                // Store the temp dir for later use
+                global.lastTempDir = options.saveFilesToDir;
+            }
+        }
+        
         if (options.saveFilesToDir === undefined) options.saveFilesToDir = false;
         if (options.parseFields === undefined) options.parseFields = true;
         if (options.limits === undefined) options.limits = {};
+        
+        logger.info(`[TAPIS DEBUG] formDataParser processed options: saveFilesToDir=${options.saveFilesToDir}, parseFields=${options.parseFields}`);
+        
+        // If parseFields is false, don't use Busboy - this is for processing existing files
+        if (!options.parseFields) {
+            logger.info(`[TAPIS DEBUG] parseFields=false, processing existing files instead of parsing form`);
+            
+            const params = {
+                options: null,
+                taskName: "",
+                skipPostProcessing: false,
+                outputs: null,
+                dateCreated: null,
+                error: null,
+                webhook: "",
+                fileNames: [],
+                imagesCount: 0
+            };
+            
+            // Read existing files from saveFilesToDir
+            const fs = require('fs');
+            const path = require('path');
+            
+            if (options.saveFilesToDir && fs.existsSync(options.saveFilesToDir)) {
+                const allFiles = fs.readdirSync(options.saveFilesToDir);
+                logger.info(`[TAPIS DEBUG] All files in directory: ${JSON.stringify(allFiles)}`);
+                
+                const files = allFiles.filter(f => {
+                    const isImage = f.toLowerCase().endsWith('.jpg') || 
+                                   f.toLowerCase().endsWith('.jpeg') ||
+                                   f.toLowerCase().endsWith('.png') ||
+                                   f.toLowerCase().endsWith('.tiff');
+                    logger.info(`[TAPIS DEBUG] File ${f}: isImage=${isImage}`);
+                    return isImage;
+                });
+                
+                params.fileNames = files;
+                params.imagesCount = files.length;
+                logger.info(`[TAPIS DEBUG] Found ${files.length} image files: ${JSON.stringify(files)}`);
+            }
+            
+            // Read body.json if it exists
+            const bodyPath = path.join(options.saveFilesToDir, 'body.json');
+            if (fs.existsSync(bodyPath)) {
+                try {
+                    const bodyData = JSON.parse(fs.readFileSync(bodyPath, 'utf8'));
+                    Object.assign(params, bodyData);
+                    logger.info(`[TAPIS DEBUG] Loaded body.json: ${bodyData.taskName}`);
+                } catch (e) {
+                    logger.error(`[TAPIS DEBUG] Failed to read body.json: ${e.message}`);
+                }
+            }
+            
+            // Call the callback immediately
+            onFinish(params);
+            return;
+        }
         
         const busboy = new Busboy({ headers: req.headers });
 
@@ -110,9 +197,30 @@ module.exports = {
             fileNames: [],
             imagesCount: 0
         };
+        
+        // Track completion state for manual busboy finish detection
+        let expectedFiles = 0;
+        let completedFiles = 0;
+        let requestEnded = false;
+        let formFinished = false;
+        
+        const checkCompletion = () => {
+            logger.info(`[TAPIS DEBUG] Completion check: expectedFiles=${expectedFiles}, completedFiles=${completedFiles}, requestEnded=${requestEnded}, formFinished=${formFinished}`);
+            if (expectedFiles > 0 && completedFiles >= expectedFiles && requestEnded && !formFinished) {
+                // Check if a response was already sent via error handling
+                if (params && params.isResponseSent && params.isResponseSent()) {
+                    logger.info(`[TAPIS DEBUG] Response already sent, skipping onFinish`);
+                    return;
+                }
+                logger.info(`[TAPIS DEBUG] Manual completion detected - calling onFinish`);
+                formFinished = true;
+                onFinish(params);
+            }
+        };
 
         if (options.parseFields){
             busboy.on('field', function(fieldname, val, fieldnameTruncated, valTruncated) {
+                logger.info(`[TAPIS DEBUG] Form field received: ${fieldname} = ${val}`);
                 // Save options
                 if (fieldname === 'options'){
                     params.options = val;
@@ -144,8 +252,12 @@ module.exports = {
             });
         }
         if (options.saveFilesToDir){
+            logger.info(`[TAPIS DEBUG] Setting up file handler for saveFilesToDir: ${options.saveFilesToDir}`);
             busboy.on('file', async function(fieldname, file, filename, encoding, mimetype) {
+                logger.info(`[TAPIS DEBUG] File upload received: fieldname=${fieldname}, filename=${filename}`);
                 if (fieldname === 'images'){
+                    expectedFiles++;
+                    logger.info(`[TAPIS DEBUG] Expected files count: ${expectedFiles}`);
                     if (options.limits.maxImages && params.imagesCount > options.limits.maxImages){
                         params.error = "Max images count exceeded.";
                         file.resume();
@@ -161,46 +273,168 @@ module.exports = {
 
                     const name = path.basename(filename);
                     params.fileNames.push(name);
+                    logger.info(`[TAPIS DEBUG] Added filename to array: ${name}, fileNames length: ${params.fileNames.length}`);
         
                     const saveTo = path.join(options.saveFilesToDir, name);
                     let saveStream = null;
 
+                    // Track whether the file upload completed successfully and cleanup status
+                    let uploadCompleted = false;
+                    let cleanupHandled = false;
+                    const handlerId = Math.random().toString(36).substr(2, 9);
+                    logger.info(`[TAPIS DEBUG] Created handleClose handler ${handlerId} for ${saveTo}`);
+                    
                     // Detect if a connection is aborted/interrupted
                     // and cleanup any open streams to avoid fd leaks
                     const handleClose = () => {
+                        const stack = new Error().stack;
+                        logger.info(`[TAPIS DEBUG] handleClose ${handlerId} triggered for ${saveTo}, uploadCompleted: ${uploadCompleted}, cleanupHandled: ${cleanupHandled}`);
+                        logger.info(`[TAPIS DEBUG] handleClose ${handlerId} called from: ${stack.split('\n').slice(1,4).join('\n')}`);
+                        
+                        // Prevent multiple cleanup attempts
+                        if (cleanupHandled) {
+                            logger.info(`[TAPIS DEBUG] Cleanup already handled for ${saveTo}, skipping`);
+                            return;
+                        }
+                        cleanupHandled = true;
+                        
                         if (saveStream){
                             saveStream.close();
                             saveStream = null;
                         }
-                        fs.exists(saveTo, exists => {
-                            if (exists){
-                                fs.unlink(saveTo, err => {
-                                    if (err) logger.error(err);
-                                });
+                        
+                        // Check conditions synchronously before any async operations
+                        const tmpDir = path.dirname(saveTo);
+                        const shouldDelete = !uploadCompleted && !global.taskProcessingDirs?.has(tmpDir);
+                        
+                        if (shouldDelete) {
+                            // Double-check the conditions right before deletion (race condition protection)
+                            fs.exists(saveTo, exists => {
+                                if (exists) {
+                                    // Final check before actual deletion to prevent race condition
+                                    if (!global.taskProcessingDirs?.has(tmpDir)) {
+                                        logger.info(`[TAPIS DEBUG] DELETING incomplete file: ${saveTo}`);
+                                        fs.unlink(saveTo, err => {
+                                            if (err) logger.error(err);
+                                            else logger.info(`[TAPIS DEBUG] Successfully deleted incomplete file: ${saveTo}`);
+                                        });
+                                    } else {
+                                        logger.info(`[TAPIS DEBUG] NOT deleting ${saveTo} - task processing started during cleanup`);
+                                    }
+                                }
+                            });
+                        } else {
+                            if (uploadCompleted) {
+                                logger.info(`[TAPIS DEBUG] NOT deleting ${saveTo} - upload completed successfully`);
+                            } else {
+                                logger.info(`[TAPIS DEBUG] NOT deleting ${saveTo} - task processing in progress`);
                             }
-                        });
+                        }
                     };
                     req.on('close', handleClose);
                     req.on('abort', handleClose);
 
+                    saveStream = fs.createWriteStream(saveTo);
+                    
+                    saveStream.on('error', (err) => {
+                        logger.error(`[TAPIS DEBUG] Write stream error for ${filename}: ${err.message}`);
+                        params.error = `File upload error: ${err.message}`;
+                    });
+                    
+                    // Handle the file stream end event for busboy completion
                     file.on('end', () => {
+                        logger.info(`[TAPIS DEBUG] File stream 'end' event for ${filename}`);
                         req.removeListener('close', handleClose);
                         req.removeListener('abort', handleClose);
-                        saveStream = null;
-                        params.imagesCount++;
-                        if (options.limits.maxImages && params.imagesCount > options.limits.maxImages){
-                            params.error = "Max images count exceeded.";
-                        }
+                        // Don't increment here - wait for write stream to finish
                     });
-
-                    saveStream = fs.createWriteStream(saveTo)
+                    
+                    file.on('error', (err) => {
+                        logger.error(`[TAPIS DEBUG] File stream error for ${filename}: ${err.message}`);
+                        params.error = `File upload error: ${err.message}`;
+                    });
+                    
+                    // Monitor writeStream finish - this is when file is actually saved
+                    saveStream.on('finish', () => {
+                        logger.info(`[TAPIS DEBUG] Write stream finished for ${filename}`);
+                        
+                        // Verify file was actually written
+                        if (fs.existsSync(saveTo)) {
+                            const stats = fs.statSync(saveTo);
+                            logger.info(`[TAPIS DEBUG] File confirmed on disk: ${filename} (${stats.size} bytes)`);
+                            
+                            // Mark upload as completed successfully to prevent deletion
+                            uploadCompleted = true;
+                            cleanupHandled = true; // Prevent any cleanup for this file
+                            
+                            // Remove close/abort listeners since upload completed successfully
+                            req.removeListener('close', handleClose);
+                            req.removeListener('abort', handleClose);
+                            logger.info(`[TAPIS DEBUG] Removed event listeners for successful upload: ${filename}`);
+                            
+                            // Now it's safe to count this file as completed
+                            params.imagesCount++;
+                            logger.info(`[TAPIS DEBUG] File saved: ${filename}, total images: ${params.imagesCount}`);
+                            
+                            if (options.limits.maxImages && params.imagesCount > options.limits.maxImages){
+                                params.error = "Max images count exceeded.";
+                            }
+                        } else {
+                            logger.error(`[TAPIS DEBUG] File not found on disk after finish: ${filename}`);
+                            params.error = `File upload failed: ${filename}`;
+                        }
+                        
+                        saveStream = null;
+                        completedFiles++;
+                        logger.info(`[TAPIS DEBUG] Completed files count: ${completedFiles}`);
+                        checkCompletion();
+                    });
+                    
                     file.pipe(saveStream);
                 }
             });
         }
         busboy.on('finish', function(){
+            logger.info(`[TAPIS DEBUG] Form parsing finished. imagesCount: ${params.imagesCount}`);
+            logger.info(`[TAPIS DEBUG] Calling onFinish callback with params`);
             onFinish(params);
         });
+        
+        busboy.on('error', function(err){
+            logger.error(`[TAPIS DEBUG] Busboy error: ${err.message}`);
+            params.error = err.message;
+            onFinish(params);
+        });
+        
+        // Add more debugging for busboy events
+        busboy.on('fieldsLimit', () => {
+            logger.warn(`[TAPIS DEBUG] Busboy fieldsLimit reached`);
+        });
+        
+        busboy.on('filesLimit', () => {
+            logger.warn(`[TAPIS DEBUG] Busboy filesLimit reached`);
+        });
+        
+        busboy.on('partsLimit', () => {
+            logger.warn(`[TAPIS DEBUG] Busboy partsLimit reached`);
+        });
+        
+        // Debug the request stream
+        req.on('end', () => {
+            logger.info(`[TAPIS DEBUG] Request stream ended`);
+            requestEnded = true;
+            checkCompletion();
+        });
+        
+        req.on('close', () => {
+            logger.info(`[TAPIS DEBUG] Request stream closed`);
+        });
+        
+        req.on('error', (err) => {
+            logger.error(`[TAPIS DEBUG] Request stream error: ${err.message}`);
+        });
+        
+        logger.info(`[TAPIS DEBUG] About to pipe request to busboy`);
         req.pipe(busboy);
     },
 
@@ -290,9 +524,39 @@ module.exports = {
 
     process: async function(req, res, cloudProvider, uuid, params, token, limits, getLimitedOptions){
         const tmpPath = path.join("tmp", uuid);
-        const { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
+        let { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
+        
+        // Initialize global directory tracking if not exists
+        if (!global.taskProcessingDirs) {
+            global.taskProcessingDirs = new Set();
+        }
+        
+        // Mark this directory as being processed to prevent file cleanup
+        global.taskProcessingDirs.add(tmpPath);
+        logger.info(`[TAPIS DEBUG] Marked directory ${tmpPath} as processing, total processing dirs: ${global.taskProcessingDirs.size}`);
+        
+        // Fix imagesCount - use actual fileNames array length instead of the potentially incorrect counter
+        if (fileNames && Array.isArray(fileNames)) {
+            imagesCount = fileNames.length;
+            logger.info(`[TAPIS DEBUG] Fixed imagesCount from ${params.imagesCount} to ${imagesCount} based on fileNames array`);
+        }
+
+        logger.info(`[TAPIS DEBUG] Starting task processing for UUID: ${uuid}`);
+        
+        // Debug: Check if files still exist at the very start of task processing
+        try {
+            const fs = require('fs');
+            const filesAtProcessStart = fs.readdirSync(tmpPath);
+            logger.info(`[TAPIS DEBUG] Files in tmpPath at START of task processing: ${filesAtProcessStart.join(', ')}`);
+        } catch (e) {
+            logger.error(`[TAPIS DEBUG] Cannot read tmpPath at START of task processing: ${e.message}`);
+        }
+        
+        logger.info(`[TAPIS DEBUG] fileNames: ${JSON.stringify(fileNames)}, imagesCount: ${imagesCount}`);
+        logger.info(`[TAPIS DEBUG] taskName: ${taskName}, token: ${token ? 'present' : 'missing'}`);
 
         if (fileNames.length < 1){
+            logger.error(`[TAPIS DEBUG] ERROR: Not enough images (${fileNames.length} files uploaded)`);
             throw new Error(`Not enough images (${fileNames.length} files uploaded)`);
         }
 
@@ -312,8 +576,28 @@ module.exports = {
         const autoscale = (!node || node.availableSlots() === 0) && 
                             asrProvider.isAllowedToCreateNewNodes() &&
                             asrProvider.canHandle(fileNames.length);
+        
+        logger.info(`[TAPIS DEBUG] Autoscale decision: ${autoscale}, node: ${node ? 'exists' : 'null'}`);
+        logger.info(`[TAPIS DEBUG] ASR canCreateNodes: ${asrProvider.isAllowedToCreateNewNodes()}, canHandle: ${asrProvider.canHandle(fileNames.length)}`);
+        
+        // TEMPORARY: Log the autoscale path that would be taken
+        if (autoscale) {
+            logger.info(`[TAPIS DEBUG] WOULD PROCEED TO AUTOSCALE NODE CREATION`);
+            logger.info(`[TAPIS DEBUG] Would call asr.createNode() at line 648+`);
+        }
 
-        if (autoscale) node = nodes.referenceNode(); // Use the reference node for task options purposes
+        if (autoscale) {
+            node = nodes.referenceNode(); // Use the reference node for task options purposes
+            logger.info(`[TAPIS DEBUG] referenceNode result: ${node ? node.constructor.name : 'null'}`);
+            
+            // If no reference node exists, create a basic one for validation purposes
+            if (!node) {
+                logger.info(`[TAPIS DEBUG] No reference node found, creating basic node for autoscale validation`);
+                const Node = require('./classes/Node');
+                node = new Node('localhost', 3000); // Create a dummy node for validation
+                node.nodeData.info = { version: '1.0.0', taskQueueCount: 0 }; // Set basic info
+            }
+        }
 
         if (node){
             // Validate options
@@ -515,7 +799,14 @@ module.exports = {
                         logger.warn(`Cannot forward task ${uuid} to processing node ${node}: ${err.message}`);
                     }
                 }
-                utils.rmdir(tmpPath);
+                
+                // Only cleanup temp directory for non-Tapis nodes
+                // Tapis nodes handle their own cleanup after upload retries complete
+                const TapisNode = require('./classes/TapisNode');
+                if (!(node instanceof TapisNode)) {
+                    utils.rmdir(tmpPath);
+                }
+                
                 eventEmitter.emit('close');
             };
 
@@ -561,29 +852,81 @@ module.exports = {
             utils.json(res, { uuid });
 
             if (autoscale){
+                logger.info(`[TAPIS DEBUG] Attempting autoscale node creation`);
                 const asr = asrProvider.get();
                 try{
                     dmHostname = asr.generateHostname(imagesCount);
+                    logger.info(`[TAPIS DEBUG] Generated hostname: ${dmHostname}, calling asr.createNode`);
                     node = await asr.createNode(req, imagesCount, token, dmHostname, status);
+                    logger.info(`[TAPIS DEBUG] Node created successfully: ${node ? node.constructor.name : 'null'}`);
+                    
+                    // Debug: Check if files still exist after node creation
+                    try {
+                        const fs = require('fs');
+                        const filesAfterNodeCreation = fs.readdirSync(tmpPath);
+                        logger.info(`[TAPIS DEBUG] Files in tmpPath AFTER node creation: ${filesAfterNodeCreation.join(', ')}`);
+                    } catch (e) {
+                        logger.error(`[TAPIS DEBUG] Cannot read tmpPath AFTER node creation: ${e.message}`);
+                    }
+                    
                     if (!status.aborted) nodes.add(node);
                     else return;
                 }catch(e){
                     const err = new Error("No nodes available (attempted to autoscale but failed). Try again later.");
-                    logger.warn(`Cannot create node via autoscaling: ${e.message}`);
+                    logger.error(`[TAPIS DEBUG] Cannot create node via autoscaling: ${e.message}`);
+                    logger.error(`[TAPIS DEBUG] Stack trace: ${e.stack}`);
                     handleError(err);
                     return;
                 }
             }
 
             try{
-                await doUpload();
-                eventEmitter.emit('close');
+                // Check if this is a Tapis node
+                const TapisNode = require('./classes/TapisNode');
+                if (node instanceof TapisNode) {
+                    // For Tapis nodes, submit job instead of uploading files
+                    await node.setCurrentTask(uuid);
+                    
+                    try {
+                        // IMPORTANT: The upload happens inside submitJob
+                        // We must wait for it to completely finish before continuing
+                        await node.submitJob(imagesCount, taskOptions, fileNames, tmpPath);
+                        
+                        // Only after upload succeeds, clean up and respond
+                        await routetable.add(uuid, node, token);
+                        await tasktable.delete(uuid);
+                        
+                        // Don't clean up tmpPath here - TapisNode will handle cleanup after upload completes
+                        eventEmitter.emit('close');
+                        
+                    } catch (submitError) {
+                        // If Tapis upload fails, let TapisNode handle its own cleanup
+                        logger.error(`[TAPIS DEBUG] Tapis upload failed: ${submitError.message}`);
+                        // Don't delete tmpPath here - TapisNode will handle cleanup after retries
+                        throw submitError;
+                    }
+                } else {
+                    // Regular node processing
+                    await doUpload();
+                    eventEmitter.emit('close');
 
-                await routetable.add(uuid, node, token);
-                await tasktable.delete(uuid);
+                    await routetable.add(uuid, node, token);
+                    await tasktable.delete(uuid);
 
-                utils.rmdir(tmpPath);
+                    utils.rmdir(tmpPath);
+                }
+                
+                // Clean up global directory tracking
+                if (global.taskProcessingDirs) {
+                    global.taskProcessingDirs.delete(tmpPath);
+                    logger.info(`[TAPIS DEBUG] Removed directory ${tmpPath} from processing, remaining dirs: ${global.taskProcessingDirs.size}`);
+                }
             }catch(e){
+                // Clean up global directory tracking on error
+                if (global.taskProcessingDirs) {
+                    global.taskProcessingDirs.delete(tmpPath);
+                    logger.info(`[TAPIS DEBUG] Removed directory ${tmpPath} from processing (error), remaining dirs: ${global.taskProcessingDirs.size}`);
+                }
                 handleError(e);
             }
         }else{

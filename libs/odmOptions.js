@@ -15,6 +15,8 @@
  *  You should have received a copy of the GNU Affero General Public License
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+
+const logger = require('./logger');
 "use strict";
 module.exports = {
     // Options with limits applied
@@ -171,6 +173,13 @@ module.exports = {
         };
 
         // Scan through all possible options
+        logger.info(`[TAPIS DEBUG] odmOptions.filterOptions: odmOptions type=${typeof odmOptions}, isArray=${Array.isArray(odmOptions)}, value=${JSON.stringify(odmOptions)}`);
+        
+        if (!odmOptions || !Array.isArray(odmOptions)) {
+            logger.warn(`[TAPIS DEBUG] odmOptions is not a valid array, returning empty array`);
+            return [];
+        }
+        
         for (let odmOption of odmOptions){
             // Was this option selected by the user?
             /*jshint loopfunc: true */

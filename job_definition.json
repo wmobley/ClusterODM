@@ -1,0 +1,35 @@
+{
+  "name": "clusterodm-test-1756815647",
+  "description": "ClusterODM ODM processing job for 3 images",
+  "appId": "Whisper-Transcription",
+  "appVersion": "0.1.4sha-c2a131d",
+  "execSystemId": "ls6",
+  "execSystemLogicalQueue": "vm-small",
+  "archiveSystemId": "ls6",
+  "nodeCount": 1,
+  "coresPerNode": 2,
+  "memoryMB": 8192,
+  "maxMinutes": 120,
+  "archiveOnAppError": true,
+  "parameterSet": {
+    "appArgs": [
+      {"arg": "--input"},
+      {"arg": "/inputs/test-1756815647"},
+      {"arg": "--output"},
+      {"arg": "/outputs"}
+    ],
+    "containerArgs": [],
+    "schedulerOptions": [
+      {"arg": "-A PT2050-DataX"}
+    ]
+  },
+  "fileInputs": [
+    {
+      "name": "inputImages",
+      "description": "Input images for ODM processing",
+      "sourceUrl": "tapis://ls6/work/06659/wmobley/clusterodm/jobs/test-1756815647/inputs"
+    }
+  ],
+  "fileInputArrays": [],
+  "subscriptions": []
+}

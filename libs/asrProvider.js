@@ -37,7 +37,11 @@ module.exports = {
             if (provider){
                 asrProvider = new (require('./asr-providers/' + provider + '.js'))(userConfig);
                 await asrProvider.initialize();
-                await DockerMachine.checkInstalled();
+                
+                // Skip docker-machine check for Tapis provider
+                if (provider !== 'tapis') {
+                    await DockerMachine.checkInstalled();
+                }
             }else{
                 throw new Error("Your ASR configuration must specify a provider key (we didn't find it).");
             }
@@ -61,12 +65,24 @@ module.exports = {
         if (asrProvider.getMachinesLimit() === -1) return true; // no limit
         
         const autoSpawnedNodesCount = nodes.filter(n => n.isAutoSpawned()).length;
-        return (asrProvider.getNodesPendingCreation() + autoSpawnedNodesCount) < asrProvider.getMachinesLimit();
+        const pendingNodes = asrProvider.getNodesPendingCreation();
+        const machineLimit = asrProvider.getMachinesLimit();
+        const totalNodes = pendingNodes + autoSpawnedNodesCount;
+        
+        logger.info(`[TAPIS DEBUG] Node limits check: pending=${pendingNodes}, autoSpawned=${autoSpawnedNodesCount}, total=${totalNodes}, limit=${machineLimit}`);
+        
+        return totalNodes < machineLimit;
     },
 
     canHandle: function(imagesCount){
-        if (!asrProvider) return false;
-        return asrProvider.canHandle(imagesCount);
+        if (!asrProvider) {
+            logger.info(`[TAPIS DEBUG] asrProvider wrapper: no provider available`);
+            return false;
+        }
+        logger.info(`[TAPIS DEBUG] asrProvider wrapper: calling canHandle with imagesCount=${imagesCount}`);
+        const result = asrProvider.canHandle(imagesCount);
+        logger.info(`[TAPIS DEBUG] asrProvider wrapper: canHandle returned ${result}`);
+        return result;
     },
 
     onCommit: async function(taskId, cleanupDelay = 0){
@@ -140,6 +156,14 @@ module.exports = {
                 if (n.getDockerMachineMaxUploadTime() > 0 &&
                     (now - n.getLastRefreshed()) > n.getDockerMachineMaxUploadTime() * 1000){
                     logger.warn(`${n} has been offline for too long and will be forcibly deleted!`)
+                    cleanNodes.push(n);
+                }
+                
+                // Special handling for TapisNodes that have never successfully connected
+                const TapisNode = require('./classes/TapisNode');
+                if (n instanceof TapisNode && n.getLastRefreshed() === 0 && 
+                    (now - n.getDockerMachineCreated()) > 300000) { // 5 minutes
+                    logger.warn(`${n} is a TapisNode that never came online and will be forcibly deleted!`);
                     cleanNodes.push(n);
                 }
             }

@@ -1,0 +1,32 @@
+{
+  "name": "odm-test-scratch-test-1756823185",
+  "description": "ODM processing of scratch-test-1756823185 drone images",
+  "appId": "nodeodm-ls6",
+  "appVersion": "1.0.0",
+  "execSystemId": "ls6",
+  "execSystemLogicalQueue": "vm-small",
+  "archiveSystemId": "ls6",
+  "nodeCount": 1,
+  "coresPerNode": 2,
+  "memoryMB": 8192,
+  "maxMinutes": 60,
+  "archiveOnAppError": true,
+  "parameterSet": {
+    "appArgs": [
+      {"arg": "/inputs"},
+      {"arg": "/outputs"}
+    ],
+    "containerArgs": [],
+    "schedulerOptions": [
+      {"arg": "-A PT2050-DataX"}
+    ]
+  },
+  "fileInputs": [
+    {
+      "name": "inputImages",
+      "description": "Drone images for ODM processing",
+      "sourceUrl": "tapis://ls6/scratch/06659/wmobley/clusterodm-jobs/scratch-test-1756823185",
+      "targetPath": "inputs"
+    }
+  ]
+}

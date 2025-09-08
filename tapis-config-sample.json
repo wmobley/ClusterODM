@@ -1,0 +1,56 @@
+{
+  "provider": "tapis",
+  "tapis": {
+    "baseUrl": "https://tacc.tapis.io",
+    "tenantId": "tacc"
+  },
+  "app": {
+    "appId": "nodeodm-app",
+    "appVersion": "1.0"
+  },
+  "system": {
+    "executionSystemId": "CHANGEME!",
+    "archiveSystemId": "CHANGEME!"
+  },
+  "job": {
+    "maxJobTime": "02:00:00",
+    "nodeCount": 1,
+    "coresPerNode": 2,
+    "memoryMB": 8192,
+    "archiveOnAppError": true
+  },
+  "maxRuntime": 7200,
+  "maxUploadTime": 3600,
+  "jobLimit": 10,
+  "createRetries": 3,
+  "imageSizeMapping": [
+    {
+      "maxImages": 50,
+      "nodeCount": 1,
+      "coresPerNode": 2,
+      "memoryMB": 8192,
+      "maxJobTime": "02:00:00"
+    },
+    {
+      "maxImages": 200,
+      "nodeCount": 1,
+      "coresPerNode": 4,
+      "memoryMB": 16384,
+      "maxJobTime": "04:00:00"
+    },
+    {
+      "maxImages": 500,
+      "nodeCount": 1,
+      "coresPerNode": 8,
+      "memoryMB": 32768,
+      "maxJobTime": "08:00:00"
+    },
+    {
+      "maxImages": 1000,
+      "nodeCount": 2,
+      "coresPerNode": 8,
+      "memoryMB": 32768,
+      "maxJobTime": "12:00:00"
+    }
+  ]
+}

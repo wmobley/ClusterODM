@@ -83,6 +83,13 @@ module.exports = {
             const cacheValue = optionsCache.get(token);
             if (cacheValue) return cacheValue;
 
+            if (!node) {
+                // For ASR providers without reference nodes, use default options
+                const defaultOptions = [];
+                const limitedOptions = odmOptions.optionsWithLimits(defaultOptions, limits.options);
+                return optionsCache.set(token, limitedOptions);
+            }
+
             const options = await node.getOptions();
             const limitedOptions = odmOptions.optionsWithLimits(options, limits.options);
             return optionsCache.set(token, limitedOptions);
@@ -196,6 +203,15 @@ module.exports = {
             try{
                 const urlParts = url.parse(req.url, true);
                 const { query, pathname } = urlParts;
+                
+                // Extract token from Authorization header if not in query params
+                if (!query.token && req.headers.authorization) {
+                    const authHeader = req.headers.authorization;
+                    if (authHeader.startsWith('Bearer ')) {
+                        query.token = authHeader.substring(7); // Remove 'Bearer ' prefix
+                        logger.info(`[TAPIS DEBUG] Extracted token from Authorization header`);
+                    }
+                }
 
                 if (publicPath(pathname)){
                     forwardToReferenceNode(req, res);
@@ -266,47 +282,103 @@ module.exports = {
 
                     const { uuid, tmpPath, die } = ctx;
 
+                    logger.info(`[TAPIS DEBUG] proxy.js - tmpPath: ${tmpPath}, limits: ${JSON.stringify(limits)}`);
+                    logger.info(`[TAPIS DEBUG] proxy.js - calling formDataParser from /task/new/init handler`);
+
                     taskNew.formDataParser(req, async function(params){
+                        logger.info(`[TAPIS DEBUG] formDataParser callback called with params:`, {
+                            fileNames: params.fileNames,
+                            imagesCount: params.imagesCount,
+                            error: params.error,
+                            taskName: params.taskName
+                        });
+                        
                         const { options } = params;
                         if (params.error){
                             die(params.error);
                             return;
                         }
 
+                        logger.info(`[TAPIS DEBUG] Checking nodes and autoscale...`);
                         const referenceNode = nodes.referenceNode();
-                        if (!referenceNode){
+                        const asrProvider = require('./asrProvider');
+                        const canAutoscale = asrProvider.isAllowedToCreateNewNodes();
+                        
+                        logger.info(`[TAPIS DEBUG] referenceNode: ${referenceNode ? 'exists' : 'null'}, canAutoscale: ${canAutoscale}`);
+                        
+                        if (!referenceNode && !canAutoscale){
+                            logger.error(`[TAPIS DEBUG] No nodes available and can't autoscale`);
                             die("Cannot create task, no nodes are online.");
                             return;
                         }
+                        
+                        // If we have no reference node but can autoscale, we'll create one later
+                        if (!referenceNode && canAutoscale) {
+                            logger.info(`[TAPIS DEBUG] No reference node but can autoscale - proceeding with task creation`);
+                        }
 
+                        logger.info(`[TAPIS DEBUG] Checking concurrency limits...`);
                         if (await maxConcurrencyLimitReached(limits.maxConcurrentTasks, query.token)){
                             // TODO: A better solution would be to put the task in a queue
                             // but it's non-trivial to keep such a state, as well as to deal
                             // with scalability of storage requirements.
+                            logger.error(`[TAPIS DEBUG] Reached max concurrent tasks: ${limits.maxConcurrentTasks}`);
                             die(`Reached maximum number of concurrent tasks: ${limits.maxConcurrentTasks}. Please wait until other tasks have finished, then restart the task.`);
                             return;
                         }
+                        logger.info(`[TAPIS DEBUG] Concurrency check passed`);
+
+                        logger.info(`[TAPIS DEBUG] About to call taskNew.process...`);
 
                         // Validate options
                         try{
-                            odmOptions.filterOptions(options, await getLimitedOptions(query.token, limits, referenceNode));
+                            logger.info(`[TAPIS DEBUG] Validating options...`);
+                            odmOptions.filterOptions(options, await getLimitedOptions(query.token, limits, referenceNode || null));
+                            logger.info(`[TAPIS DEBUG] Options validation passed`);
                         }catch(e){
+                            logger.error(`[TAPIS DEBUG] Options validation failed: ${e.message}`);
                             die(e.message);
                             return;
                         }
 
+                        logger.info(`[TAPIS DEBUG] Recording task and checking flood...`);
                         floodMonitor.recordTaskInit(query.token);
                         
                         if (floodMonitor.isFlooding(query.token)){
+                            logger.error(`[TAPIS DEBUG] Flooding detected`);
                             die(`Uuh, slow down! It seems like you are sending a lot of tasks. Check that your connection is not dropping, or wait ${floodMonitor.FORGIVE_TIME} minutes and try again.`);
                             return;
                         }
 
+                        logger.info(`[TAPIS DEBUG] Saving body.json and copying files to UUID directory...`);
+                        
+                        // Copy files from random temp dir to UUID dir
+                        if (params.fileNames && params.fileNames.length > 0 && global.lastTempDir) {
+                            const srcDir = global.lastTempDir;
+                            logger.info(`[TAPIS DEBUG] Copying files from ${srcDir} to ${tmpPath}`);
+                            
+                            params.fileNames.forEach(fileName => {
+                                const srcFile = path.join(srcDir, fileName);
+                                const dstFile = path.join(tmpPath, fileName);
+                                if (fs.existsSync(srcFile)) {
+                                    try {
+                                        fs.copyFileSync(srcFile, dstFile);
+                                        logger.info(`[TAPIS DEBUG] Copied ${fileName}`);
+                                    } catch (e) {
+                                        logger.error(`[TAPIS DEBUG] Failed to copy ${fileName}: ${e.message}`);
+                                    }
+                                }
+                            });
+                        }
+                        
                         // Save
                         fs.writeFile(path.join(tmpPath, "body.json"),
                                     JSON.stringify(params), {encoding: 'utf8'}, err => {
-                            if (err) json(res, { error: err });
-                            else{
+                            if (err) {
+                                logger.error(`[TAPIS DEBUG] Failed to save body.json: ${err.message}`);
+                                json(res, { error: err });
+                            } else{
+                                logger.info(`[TAPIS DEBUG] Saved body.json, returning UUID: ${uuid}`);
                                 // All good
                                 json(res, { uuid });
                             }
@@ -437,12 +509,16 @@ module.exports = {
                         }
 
                         try{
+                            logger.info(`[TAPIS DEBUG] Calling taskNew.process with uuid: ${uuid}, fileNames: ${params.fileNames.length}`);
                             await taskNew.process(req, res, cloudProvider, uuid, params, query.token, limits, getLimitedOptions);
+                            logger.info(`[TAPIS DEBUG] taskNew.process completed successfully`);
                         }catch(e){
+                            logger.error(`[TAPIS DEBUG] taskNew.process failed: ${e.message}`);
+                            logger.error(`[TAPIS DEBUG] Stack: ${e.stack}`);
                             die(e.message);
                             return;
                         }
-                    }, { saveFilesToDir: tmpPath, limits });
+                    }, { saveFilesToDir: tmpPath, limits, uuid });
                 }else if (req.method === 'POST' && ['/task/restart', '/task/cancel', '/task/remove'].indexOf(pathname) !== -1){
                     // Lookup task id from body
                     let taskId = null;
@@ -577,8 +653,64 @@ module.exports = {
                         const node = await routetable.lookupNode(taskId);
 
                         if (node){
-                            overrideRequest(req, node, query, pathname);
-                            proxy.web(req, res, { target: node.proxyTargetUrl() });
+                            // Special handling for TapisNode - handle requests internally
+                            if (node.constructor.name === 'TapisNode') {
+                                logger.info(`[TAPIS DEBUG] Handling TapisNode request internally: ${pathname}`);
+                                
+                                try {
+                                    // Parse the action from pathname
+                                    const parts = pathname.split('/');
+                                    const action = parts[3]; // /task/<uuid>/<action>
+                                    
+                                    if (action === 'info') {
+                                        const info = await node.taskInfo(taskId);
+                                        json(res, info);
+                                        return;
+                                    } else if (action === 'output') {
+                                        const line = parseInt(query.line) || 0;
+                                        const output = await node.taskOutput(taskId, line);
+                                        json(res, output);
+                                        return;
+                                    } else if (action === 'cancel') {
+                                        const result = await node.taskCancel(taskId);
+                                        json(res, result);
+                                        return;
+                                    } else if (action === 'remove') {
+                                        const result = await node.taskRemove(taskId);
+                                        json(res, result);
+                                        return;
+                                    } else if (action && action.indexOf('download') === 0) {
+                                        // Handle file downloads
+                                        const assetsMatch = action.match(/^download\/(.+)$/);
+                                        if (assetsMatch && assetsMatch[1]) {
+                                            const asset = assetsMatch[1];
+                                            const downloadPath = await node.taskDownload(taskId, asset);
+                                            // Stream the file
+                                            const fs = require('fs');
+                                            const stat = fs.statSync(downloadPath);
+                                            res.writeHead(200, {
+                                                'Content-Type': 'application/zip',
+                                                'Content-Length': stat.size
+                                            });
+                                            const readStream = fs.createReadStream(downloadPath);
+                                            readStream.pipe(res);
+                                            return;
+                                        }
+                                    }
+                                    
+                                    // Unsupported action
+                                    json(res, { error: `Action ${action} not supported for TapisNode` });
+                                    return;
+                                } catch (e) {
+                                    logger.error(`[TAPIS DEBUG] TapisNode request failed: ${e.message}`);
+                                    json(res, { error: e.message });
+                                    return;
+                                }
+                            } else {
+                                // Regular node - use HTTP proxy
+                                overrideRequest(req, node, query, pathname);
+                                proxy.web(req, res, { target: node.proxyTargetUrl() });
+                            }
                         }else{
                             const taskTableEntry = await tasktable.lookup(taskId);
                             if (taskTableEntry){

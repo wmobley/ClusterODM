@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ClusterODM Image Upload Test</title>
+</head>
+<body>
+    <h2>Upload Images to ClusterODM</h2>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <div>
+            <label>Select Images:</label><br>
+            <input type="file" name="images" multiple accept="image/*" required>
+        </div>
+        <br>
+        <div>
+            <label>Tapis Token:</label><br>
+            <input type="text" id="token" placeholder="Paste your Tapis token here" style="width: 400px;">
+        </div>
+        <br>
+        <button type="submit">Upload and Process</button>
+    </form>
+
+    <div id="result" style="margin-top: 20px;"></div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const files = document.querySelector('input[type="file"]').files;
+            const token = document.getElementById('token').value;
+            
+            if (!token) {
+                alert('Please enter your Tapis token');
+                return;
+            }
+            
+            // Add all selected files
+            for (let file of files) {
+                formData.append('images', file);
+            }
+            
+            document.getElementById('result').innerHTML = 'Uploading...';
+            
+            try {
+                const response = await fetch('/task/new', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: formData
+                });
+                
+                const result = await response.json();
+                document.getElementById('result').innerHTML = 
+                    '<h3>Upload Result:</h3><pre>' + JSON.stringify(result, null, 2) + '</pre>';
+                
+                if (result.uuid) {
+                    document.getElementById('result').innerHTML += 
+                        `<p><strong>Task UUID:</strong> ${result.uuid}</p>
+                         <p>Check status at: <a href="/task/${result.uuid}/info">/task/${result.uuid}/info</a></p>`;
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    '<h3>Error:</h3><pre>' + error.toString() + '</pre>';
+            }
+        });
+    </script>
+</body>
+</html>

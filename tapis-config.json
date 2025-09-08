@@ -1,0 +1,57 @@
+{
+  "provider": "tapis",
+  "tapis": {
+    "baseUrl": "https://portals.tapis.io",
+    "tenantId": "portals",
+    "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Imd5YU5uVXJJZGxsYkhkWU5vWEpoRE85NTZDa0pkbWdybURPSDJNZHNnclkiLCJ0eXAiOiJKV1QifQ.eyJqdGkiOiI1NWU1NzMzZS1mZDc1LTRmZTUtODQ4Yi00N2Q2ZmE3MDA3ZjEiLCJpc3MiOiJodHRwczovL3BvcnRhbHMudGFwaXMuaW8vdjMvdG9rZW5zIiwic3ViIjoid21vYmxleUBwb3J0YWxzIiwidGFwaXMvdGVuYW50X2lkIjoicG9ydGFscyIsInRhcGlzL3Rva2VuX3R5cGUiOiJhY2Nlc3MiLCJ0YXBpcy9kZWxlZ2F0aW9uIjpmYWxzZSwidGFwaXMvZGVsZWdhdGlvbl9zdWIiOm51bGwsInRhcGlzL3VzZXJuYW1lIjoid21vYmxleSIsInRhcGlzL2FjY291bnRfdHlwZSI6InVzZXIiLCJleHAiOjE3NTcwMTgxMjIsInRhcGlzL2NsaWVudF9pZCI6bnVsbCwidGFwaXMvZ3JhbnRfdHlwZSI6InBhc3N3b3JkIn0.pyOqw28_yRml4T60BVTK6DAJ_17cperBfE1oH3JitA5JNlVjTvUJjFvkgFV4tAS0UEcGZFhSuFGB-vN5xU7UsD2Va8vAol53ywPuvwv4JfT-v0zO1rTGq0G_ruJtDWyTeCOOGJOSLPZTeusfRfsUaZnImBlZif1uMpwpuhbE9wtG64D0zA3ZZjcsbqmPWb4Dmcj7B-mHwFVoz8uUiKJlFSKFJYpIrBpnAQRr49jw-ItJ8kfg4lcOZn9X11l7dJR1ZwVgCuyu628YdUUr1BlngFF_5tjuuUovpeGZTWPuHsq6y-0LQWYPmzMVmhcL-LWdNnuXV2to-ju-8O8Voy8Urw"
+  },
+  "app": {
+    "appId": "nodeodm-ls6",
+    "appVersion": "1.0.5-sha-a30b980"
+  },
+  "system": {
+    "executionSystemId": "ls6",
+    "archiveSystemId": "ls6"
+  },
+  "job": {
+    "maxJobTime": "02:00:00",
+    "nodeCount": 1,
+    "coresPerNode": 2,
+    "memoryMB": 8192,
+    "archiveOnAppError": true
+  },
+  "maxRuntime": 7200,
+  "maxUploadTime": 3600,
+  "jobLimit": 10,
+  "createRetries": 3,
+  "imageSizeMapping": [
+    {
+      "maxImages": 50,
+      "nodeCount": 1,
+      "coresPerNode": 2,
+      "memoryMB": 8192,
+      "maxJobTime": "02:00:00"
+    },
+    {
+      "maxImages": 200,
+      "nodeCount": 1,
+      "coresPerNode": 4,
+      "memoryMB": 16384,
+      "maxJobTime": "04:00:00"
+    },
+    {
+      "maxImages": 500,
+      "nodeCount": 1,
+      "coresPerNode": 8,
+      "memoryMB": 32768,
+      "maxJobTime": "08:00:00"
+    },
+    {
+      "maxImages": 1000,
+      "nodeCount": 2,
+      "coresPerNode": 8,
+      "memoryMB": 32768,
+      "maxJobTime": "12:00:00"
+    }
+  ]
+}
