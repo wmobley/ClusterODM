@@ -473,10 +473,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             throw new Error(`Cannot handle ${imagesCount} images.`);
         }
 
-        // Use config token if no token provided from request
+        // Token must be provided from request - no fallback to config
         if (!token || token === 'missing') {
-            token = this.getConfig("tapis.token");
-            logger.info(`[TAPIS DEBUG] Using token from config`);
+            throw new Error('Tapis JWT token must be provided in request headers (Authorization: Bearer <token>) or query parameters (?token=<token>)');
         }
 
         // Validate token first

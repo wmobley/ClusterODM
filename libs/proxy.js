@@ -209,8 +209,12 @@ module.exports = {
                     const authHeader = req.headers.authorization;
                     if (authHeader.startsWith('Bearer ')) {
                         query.token = authHeader.substring(7); // Remove 'Bearer ' prefix
-                        logger.info(`[TAPIS DEBUG] Extracted token from Authorization header`);
+                        logger.info(`[TAPIS DEBUG] Extracted JWT token from Authorization header for ${pathname}`);
                     }
+                } else if (query.token) {
+                    logger.info(`[TAPIS DEBUG] Using JWT token from query parameter for ${pathname}`);
+                } else {
+                    logger.info(`[TAPIS DEBUG] No JWT token provided for ${pathname}`);
                 }
 
                 if (publicPath(pathname)){
