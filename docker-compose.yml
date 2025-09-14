@@ -22,8 +22,7 @@ services:
       - nodeodm-1
     networks:
       - default
-      - webodm_default
 
 networks:
-  webodm_default:
-    external: true
+  default:
+    driver: bridge
