@@ -36,7 +36,7 @@ let argDefs = {
             'cloud-provider', 'downloads-from-s3', 'token', 'log-level',
             'upload-max-speed', 'ssl-key', 'ssl-cert', 'secure-port',
             'public-address', 'config',
-            'asr'],
+            'asr', 'registration-secret'],
     boolean: ['splitmerge', 'debug'],
     alias: {
         p: 'port',
@@ -73,6 +73,7 @@ Options:
     --ssl-key <file>	Path to .pem SSL key file
     --ssl-cert <file>	Path to SSL .pem certificate
     --asr <file>	Path to configuration for enabling the autoscaler. This is combined with the provider's default configuration (default: none)
+    --registration-secret <string>	Shared secret for automatic node registration via webhook (default: none)
 
 Log Levels: 
 error | debug | info | verbose | debug | silly 

@@ -104,6 +104,198 @@ module.exports = {
       }
     });
 
+    app.post("/webhook/register-node", async (req, res) => {
+      const { hostname, port, token, registrationSecret, tapisToken } = req.body;
+
+      // Validate required fields
+      if (!hostname || !port) {
+        return res.status(400).json({ error: "Missing hostname or port" });
+      }
+
+      logger.info(`Node registration request from ${hostname}:${port}`);
+
+      // Authentication validation
+      let authenticated = false;
+
+      // Method 1: Tapis JWT token authentication (preferred for Tapis nodes)
+      if (tapisToken) {
+        try {
+          const asrProvider = require('./libs/asrProvider');
+          const provider = asrProvider.get();
+
+          if (provider && provider.getDriverName && provider.getDriverName() === 'tapis') {
+            logger.info(`Validating Tapis JWT token for node ${hostname}:${port}`);
+            await provider.validateToken(tapisToken);
+            authenticated = true;
+            logger.info(`Tapis JWT token validation successful for ${hostname}:${port}`);
+          } else {
+            logger.warn(`Tapis token provided but no Tapis ASR provider available`);
+            return res.status(400).json({ error: "Tapis token provided but Tapis provider not configured" });
+          }
+        } catch (e) {
+          logger.warn(`Tapis JWT token validation failed for ${hostname}:${port}: ${e.message}`);
+          return res.status(401).json({ error: `Tapis token validation failed: ${e.message}` });
+        }
+      }
+
+      // Method 2: Registration secret authentication (fallback)
+      if (!authenticated && options.registrationSecret) {
+        if (registrationSecret !== options.registrationSecret) {
+          logger.warn(`Invalid registration secret from ${hostname}:${port}`);
+          return res.status(401).json({ error: "Invalid registration secret" });
+        }
+        authenticated = true;
+        logger.info(`Registration secret validation successful for ${hostname}:${port}`);
+      }
+
+      // Method 3: No authentication required (if no secret configured)
+      if (!authenticated && !options.registrationSecret) {
+        authenticated = true;
+        logger.info(`No authentication required for ${hostname}:${port}`);
+      }
+
+      // If authentication is required but not provided
+      if (!authenticated) {
+        logger.warn(`Authentication required but not provided for ${hostname}:${port}`);
+        return res.status(401).json({
+          error: "Authentication required: provide either 'tapisToken' or 'registrationSecret'"
+        });
+      }
+
+      const node = nodes.addUnique(hostname, port, token);
+
+      if (node) {
+        logger.info(`Successfully registered node ${hostname}:${port}`);
+        node.updateInfo();
+        res.json({
+          success: true,
+          message: "Node registered successfully",
+          nodeId: nodes.all().indexOf(node) + 1,
+          authMethod: tapisToken ? "tapis-jwt" : "registration-secret"
+        });
+      } else {
+        logger.warn(`Node ${hostname}:${port} already exists or invalid`);
+        res.json({
+          success: false,
+          error: "Node already exists or invalid parameters"
+        });
+      }
+    });
+
+    app.post("/webhook/deregister-node", async (req, res) => {
+      const { hostname, port, nodeId, tapisToken, registrationSecret } = req.body;
+
+      logger.info(`Node de-registration request from ${hostname || 'unknown'}:${port || 'unknown'}`);
+
+      // Authentication validation (same as registration)
+      let authenticated = false;
+
+      // Method 1: Tapis JWT token authentication (preferred for Tapis nodes)
+      if (tapisToken) {
+        try {
+          const asrProvider = require('./libs/asrProvider');
+          const provider = asrProvider.get();
+
+          if (provider && provider.getDriverName && provider.getDriverName() === 'tapis') {
+            logger.info(`Validating Tapis JWT token for node de-registration ${hostname}:${port}`);
+            await provider.validateToken(tapisToken);
+            authenticated = true;
+            logger.info(`Tapis JWT token validation successful for de-registration ${hostname}:${port}`);
+          } else {
+            logger.warn(`Tapis token provided but no Tapis ASR provider available`);
+            return res.status(400).json({ error: "Tapis token provided but Tapis provider not configured" });
+          }
+        } catch (e) {
+          logger.warn(`Tapis JWT token validation failed for de-registration ${hostname}:${port}: ${e.message}`);
+          return res.status(401).json({ error: `Tapis token validation failed: ${e.message}` });
+        }
+      }
+
+      // Method 2: Registration secret authentication (fallback)
+      if (!authenticated && options.registrationSecret) {
+        if (registrationSecret !== options.registrationSecret) {
+          logger.warn(`Invalid registration secret for de-registration from ${hostname}:${port}`);
+          return res.status(401).json({ error: "Invalid registration secret" });
+        }
+        authenticated = true;
+        logger.info(`Registration secret validation successful for de-registration ${hostname}:${port}`);
+      }
+
+      // Method 3: No authentication required (if no secret configured)
+      if (!authenticated && !options.registrationSecret) {
+        authenticated = true;
+        logger.info(`No authentication required for de-registration ${hostname}:${port}`);
+      }
+
+      // If authentication is required but not provided
+      if (!authenticated) {
+        logger.warn(`Authentication required but not provided for de-registration ${hostname}:${port}`);
+        return res.status(401).json({
+          error: "Authentication required: provide either 'tapisToken' or 'registrationSecret'"
+        });
+      }
+
+      // Find node to remove
+      let nodeToRemove = null;
+
+      // Method 1: Find by nodeId (most reliable)
+      if (nodeId) {
+        nodeToRemove = nodes.nth(nodeId);
+        if (!nodeToRemove) {
+          logger.warn(`Node with ID ${nodeId} not found for de-registration`);
+          return res.status(404).json({ error: `Node with ID ${nodeId} not found` });
+        }
+      }
+      // Method 2: Find by hostname and port
+      else if (hostname && port) {
+        nodeToRemove = nodes.find(n => n.hostname() === hostname && n.port() === parseInt(port));
+        if (!nodeToRemove) {
+          logger.warn(`Node ${hostname}:${port} not found for de-registration`);
+          return res.status(404).json({ error: `Node ${hostname}:${port} not found` });
+        }
+      }
+      // Method 3: Missing identification
+      else {
+        logger.warn(`Insufficient information provided for de-registration: need nodeId or hostname+port`);
+        return res.status(400).json({ error: "Must provide either 'nodeId' or 'hostname' and 'port'" });
+      }
+
+      // Remove the node
+      const success = nodes.remove(nodeToRemove);
+
+      if (success) {
+        const nodeInfo = `${nodeToRemove.hostname()}:${nodeToRemove.port()}`;
+        logger.info(`Successfully de-registered node ${nodeInfo}`);
+
+        // If it's an auto-spawned node (like TapisNode), clean up resources
+        if (nodeToRemove.isAutoSpawned && nodeToRemove.isAutoSpawned()) {
+          try {
+            const asrProvider = require('./libs/asrProvider');
+            const provider = asrProvider.get();
+            if (provider && provider.destroyNode) {
+              logger.info(`Cleaning up auto-spawned node ${nodeInfo}`);
+              await provider.destroyNode(nodeToRemove);
+            }
+          } catch (e) {
+            logger.warn(`Failed to cleanup auto-spawned node ${nodeInfo}: ${e.message}`);
+          }
+        }
+
+        res.json({
+          success: true,
+          message: "Node de-registered successfully",
+          nodeInfo: nodeInfo,
+          authMethod: tapisToken ? "tapis-jwt" : "registration-secret"
+        });
+      } else {
+        logger.error(`Failed to remove node ${nodeToRemove.hostname()}:${nodeToRemove.port()}`);
+        res.status(500).json({
+          success: false,
+          error: "Failed to remove node from cluster"
+        });
+      }
+    });
+
     app.listen(options.port);
   },
 };
