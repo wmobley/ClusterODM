@@ -105,7 +105,7 @@ module.exports = {
     });
 
     app.post("/webhook/register-node", async (req, res) => {
-      const { hostname, port, token, registrationSecret, tapisToken } = req.body;
+      const { hostname, port, token, registrationSecret, tapisToken, registrationUuid } = req.body;
 
       // Validate required fields
       if (!hostname || !port) {
@@ -117,8 +117,21 @@ module.exports = {
       // Authentication validation
       let authenticated = false;
 
-      // Method 1: Tapis JWT token authentication (preferred for Tapis nodes)
-      if (tapisToken) {
+      // Method 1: UUID-based authentication (simple and reliable for Tapis jobs)
+      if (registrationUuid) {
+        // Simple UUID validation - check if it's a valid UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidRegex.test(registrationUuid)) {
+          logger.info(`UUID authentication successful for node ${hostname}:${port} (UUID: ${registrationUuid})`);
+          authenticated = true;
+        } else {
+          logger.warn(`Invalid UUID format for node ${hostname}:${port}: ${registrationUuid}`);
+          return res.status(401).json({ error: "Invalid UUID format" });
+        }
+      }
+
+      // Method 2: Tapis JWT token authentication (fallback for compatibility)
+      else if (tapisToken) {
         try {
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
@@ -158,7 +171,7 @@ module.exports = {
       if (!authenticated) {
         logger.warn(`Authentication required but not provided for ${hostname}:${port}`);
         return res.status(401).json({
-          error: "Authentication required: provide either 'tapisToken' or 'registrationSecret'"
+          error: "Authentication required: provide 'registrationUuid', 'tapisToken', or 'registrationSecret'"
         });
       }
 
@@ -171,7 +184,7 @@ module.exports = {
           success: true,
           message: "Node registered successfully",
           nodeId: nodes.all().indexOf(node) + 1,
-          authMethod: tapisToken ? "tapis-jwt" : "registration-secret"
+          authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
         });
       } else {
         logger.warn(`Node ${hostname}:${port} already exists or invalid`);
@@ -183,15 +196,28 @@ module.exports = {
     });
 
     app.post("/webhook/deregister-node", async (req, res) => {
-      const { hostname, port, nodeId, tapisToken, registrationSecret } = req.body;
+      const { hostname, port, nodeId, tapisToken, registrationSecret, registrationUuid } = req.body;
 
       logger.info(`Node de-registration request from ${hostname || 'unknown'}:${port || 'unknown'}`);
 
       // Authentication validation (same as registration)
       let authenticated = false;
 
-      // Method 1: Tapis JWT token authentication (preferred for Tapis nodes)
-      if (tapisToken) {
+      // Method 1: UUID-based authentication (simple and reliable for Tapis jobs)
+      if (registrationUuid) {
+        // Simple UUID validation - check if it's a valid UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (uuidRegex.test(registrationUuid)) {
+          logger.info(`UUID authentication successful for de-registration ${hostname}:${port} (UUID: ${registrationUuid})`);
+          authenticated = true;
+        } else {
+          logger.warn(`Invalid UUID format for de-registration ${hostname}:${port}: ${registrationUuid}`);
+          return res.status(401).json({ error: "Invalid UUID format" });
+        }
+      }
+
+      // Method 2: Tapis JWT token authentication (fallback for compatibility)
+      else if (tapisToken) {
         try {
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
@@ -231,7 +257,7 @@ module.exports = {
       if (!authenticated) {
         logger.warn(`Authentication required but not provided for de-registration ${hostname}:${port}`);
         return res.status(401).json({
-          error: "Authentication required: provide either 'tapisToken' or 'registrationSecret'"
+          error: "Authentication required: provide 'registrationUuid', 'tapisToken', or 'registrationSecret'"
         });
       }
 
@@ -285,7 +311,7 @@ module.exports = {
           success: true,
           message: "Node de-registered successfully",
           nodeInfo: nodeInfo,
-          authMethod: tapisToken ? "tapis-jwt" : "registration-secret"
+          authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
         });
       } else {
         logger.error(`Failed to remove node ${nodeToRemove.hostname()}:${nodeToRemove.port()}`);
