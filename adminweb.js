@@ -105,7 +105,7 @@ module.exports = {
     });
 
     app.post("/webhook/register-node", async (req, res) => {
-      const { hostname, port, token, registrationSecret, tapisToken, registrationUuid } = req.body;
+      const { hostname, port, token, registrationSecret, tapisToken, registrationUuid, tapisJobUuid, nodeReady } = req.body;
 
       // Validate required fields
       if (!hostname || !port) {
@@ -175,10 +175,55 @@ module.exports = {
         });
       }
 
+      // Check if this is a Tapis node that was pre-created and needs data transfer
+      let tapisNode = null;
+      if (tapisJobUuid && nodeReady) {
+        logger.info(`Looking for pre-created TapisNode with job UUID: ${tapisJobUuid}`);
+
+        // Find the TapisNode that matches this Tapis job
+        const TapisNode = require('./libs/classes/TapisNode');
+        const allNodes = nodes.all();
+
+        for (let existingNode of allNodes) {
+          if (existingNode instanceof TapisNode && existingNode.jobId === tapisJobUuid) {
+            tapisNode = existingNode;
+            logger.info(`Found matching TapisNode: ${tapisNode.jobId}`);
+            break;
+          }
+        }
+
+        if (tapisNode) {
+          // Update the TapisNode with the real node details and trigger data transfer
+          try {
+            await tapisNode.onNodeRegistered(hostname, port, token);
+            logger.info(`Successfully triggered data transfer for TapisNode ${tapisJobUuid}`);
+
+            res.json({
+              success: true,
+              message: "Tapis node registered and data transfer initiated",
+              nodeId: nodes.all().indexOf(tapisNode) + 1,
+              tapisJobUuid: tapisJobUuid,
+              authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
+            });
+            return;
+          } catch (e) {
+            logger.error(`Failed to trigger data transfer for TapisNode ${tapisJobUuid}: ${e.message}`);
+            res.status(500).json({
+              success: false,
+              error: `Failed to trigger data transfer: ${e.message}`
+            });
+            return;
+          }
+        } else {
+          logger.warn(`No matching TapisNode found for job UUID: ${tapisJobUuid}`);
+        }
+      }
+
+      // Fall back to regular node registration if not a Tapis node or no match found
       const node = nodes.addUnique(hostname, port, token);
 
       if (node) {
-        logger.info(`Successfully registered node ${hostname}:${port}`);
+        logger.info(`Successfully registered regular node ${hostname}:${port}`);
         node.updateInfo();
         res.json({
           success: true,

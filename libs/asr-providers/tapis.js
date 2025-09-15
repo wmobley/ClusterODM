@@ -324,14 +324,14 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return uploadPath;
     }
 
-    // Submit Tapis job
-    async submitJob(token, jobId, inputPath, imagesCount, taskOptions){
+    // Submit Tapis job without input data - starts NodeODM instance
+    async submitJobWithoutData(token, jobId, imagesCount, taskOptions){
         const client = this.createApiClient(token);
         const jobProps = this.getJobPropertiesFor(imagesCount);
-        
+
         const jobDefinition = {
             name: `${jobId}`,
-            description: `ClusterODM NodeODM processing job for ${imagesCount} images`,
+            description: `ClusterODM NodeODM instance for ${imagesCount} images (waiting for data)`,
             appId: this.getConfig("app.appId"),
             appVersion: this.getConfig("app.appVersion"),
             execSystemId: this.getConfig("system.executionSystemId"),
@@ -345,18 +345,14 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             parameterSet: {
                 appArgs: [
                     { arg: "4", name: "max_concurrency", description: "Maximum number of concurrent processing tasks" },
-                    { arg: "3001", name: "nodeodm_port", description: "NodeODM service port" }
+                    { arg: "3001", name: "nodeodm_port", description: "NodeODM service port" },
+                    { arg: "https://clusterodm.tacc.utexas.edu", name: "clusterodm_url", description: "ClusterODM URL for registration" }
                 ],
                 schedulerOptions: [
                     { arg: `-A PT2050-DataX`, name: "TACC Allocation", description: "The TACC allocation associated with this job execution" }
                 ]
             },
-            fileInputs: [{
-                name: "inputImages",
-                description: "Input images for ODM processing",
-                sourceUrl: `tapis://${this.getConfig("system.archiveSystemId")}/${inputPath}`,
-                targetPath: "inputs"
-            }],
+            // No fileInputs - NodeODM will start and wait for data from ClusterODM
             subscriptions: [{
                 enabled: true,
                 ttlMinutes: 10080,
@@ -369,7 +365,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             }],
             tags: ["portalName: PTDATAX"]
         };
-        logger.debug(`[TAPIS DEBUG] Job definition being submitted:`, JSON.stringify(jobDefinition, null, 2));
+        logger.debug(`[TAPIS DEBUG] Job definition being submitted (no input data):`, JSON.stringify(jobDefinition, null, 2));
         logger.debug(`[TAPIS DEBUG] Submitting to endpoint: ${this.getConfig("tapis.baseUrl")}/v3/jobs/submit`);
 
         try {
@@ -379,11 +375,11 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 }
             });
             const tapisJobId = response.data.result.uuid;
-            
-            logger.info(`[TAPIS DEBUG] Successfully submitted Tapis job ${tapisJobId} for ClusterODM task ${jobId}`);
+
+            logger.info(`[TAPIS DEBUG] Successfully submitted Tapis job ${tapisJobId} for ClusterODM task ${jobId} (no input data)`);
             logger.debug(`[TAPIS DEBUG] Full response:`, JSON.stringify(response.data, null, 2));
             this.activeJobs.set(jobId, tapisJobId);
-            
+
             return tapisJobId;
         } catch (e) {
             const errorMsg = e.response?.data?.message || e.message;
@@ -464,10 +460,10 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         }
     }
 
-    // Override createNode to submit Tapis job instead of creating VM
-    async createNode(req, imagesCount, token, hostname, status){
+    // Override createNode to submit Tapis job and store task data
+    async createNode(req, imagesCount, token, hostname, status, taskOptions, fileNames, tmpPath){
         logger.info(`[TAPIS DEBUG] createNode called with imagesCount: ${imagesCount}, hostname: ${hostname}`);
-        
+
         if (!this.canHandle(imagesCount)) {
             logger.error(`[TAPIS DEBUG] Cannot handle ${imagesCount} images`);
             throw new Error(`Cannot handle ${imagesCount} images.`);
@@ -489,7 +485,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         }
 
         const jobId = hostname; // Use hostname as job identifier
-        logger.info(`Creating Tapis job for ${imagesCount} images with ID ${jobId}`);
+        logger.info(`Creating Tapis node for ${imagesCount} images with ID ${jobId}`);
 
         try {
             this.nodesPendingCreation++;
@@ -501,11 +497,19 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
             // Create TapisNode instance
             const node = new TapisNode(jobId, token, this);
-            
+
+            // Store the task data to be sent when NodeODM comes online
+            if (taskOptions && fileNames && tmpPath) {
+                node.setPendingTaskData(imagesCount, taskOptions, fileNames, tmpPath);
+            }
+
+            // Submit Tapis job immediately (without data)
+            await node.submitJobToQueue(imagesCount, taskOptions || {});
+
             // Mark as auto-spawned
             node.setDockerMachine(jobId, this.getMaxRuntime(), this.getMaxUploadTime());
-            
-            logger.info(`Successfully created Tapis node ${jobId}`);
+
+            logger.info(`Successfully created Tapis node ${jobId} and submitted job to queue`);
             return node;
         } catch (e) {
             logger.error(`Failed to create Tapis node: ${e.message}`);

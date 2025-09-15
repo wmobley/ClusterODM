@@ -23,7 +23,7 @@ module.exports = class TapisNode extends Node{
     constructor(jobId, token, tapisProvider){
         // Use jobId as hostname and a dummy port
         super(jobId, 3000, '');
-        
+
         this.jobId = jobId;
         this.tapisToken = token;
         this.tapisProvider = tapisProvider;
@@ -31,6 +31,8 @@ module.exports = class TapisNode extends Node{
         this.jobSubmitted = false;
         this.inputPath = null;
         this.currentTask = null;
+        this.pendingTaskData = null; // Store task data until node is ready
+        this.nodeRegistered = false; // Track if actual NodeODM has registered
         
         // Override node info with job-specific info
         this.nodeData.info = {
@@ -93,49 +95,120 @@ module.exports = class TapisNode extends Node{
         }
     }
 
-    // Submit job when task is assigned
-    async submitJob(imagesCount, taskOptions, fileNames, tmpPath){
+    // Submit job to Tapis queue (without data initially)
+    async submitJobToQueue(imagesCount, taskOptions){
         if (this.jobSubmitted) {
             throw new Error('Job already submitted for this node');
         }
 
         try {
-            logger.info(`[TAPIS DEBUG] submitJob called with tmpPath: ${tmpPath}, fileNames: ${fileNames}`);
-            
-            // Debug: Check what's in tmpPath right at the start of submitJob
-            try {
-                const fs = require('fs');
-                const filesAtStart = fs.readdirSync(tmpPath);
-                logger.info(`[TAPIS DEBUG] Files in tmpPath at start of submitJob: ${filesAtStart.join(', ')}`);
-            } catch (e) {
-                logger.error(`[TAPIS DEBUG] Cannot read tmpPath at start: ${e.message}`);
-            }
-            
-            // Upload files to Tapis storage
-            this.inputPath = await this.tapisProvider.uploadFiles(
-                this.tapisToken, 
-                fileNames, 
-                tmpPath, 
-                this.jobId
-            );
-            
-            logger.info(`[TAPIS DEBUG] uploadFiles completed successfully`);
+            logger.info(`[TAPIS DEBUG] Submitting Tapis job to queue for ${imagesCount} images (no input files yet)`);
 
-            // Submit the Tapis job
-            this.tapisJobId = await this.tapisProvider.submitJob(
+            // Submit the Tapis job without input files - this starts the NodeODM instance
+            this.tapisJobId = await this.tapisProvider.submitJobWithoutData(
                 this.tapisToken,
                 this.jobId,
-                this.inputPath,
                 imagesCount,
                 taskOptions
             );
 
             this.jobSubmitted = true;
-            logger.info(`Submitted Tapis job ${this.tapisJobId} for node ${this.jobId}`);
-            
+            logger.info(`Submitted Tapis job ${this.tapisJobId} for node ${this.jobId} - waiting for NodeODM to come online`);
+
             return this.tapisJobId;
         } catch (e) {
             logger.error(`Failed to submit job for node ${this.jobId}: ${e.message}`);
+            throw e;
+        }
+    }
+
+    // Store task data to be sent when node comes online
+    setPendingTaskData(imagesCount, taskOptions, fileNames, tmpPath){
+        this.pendingTaskData = {
+            imagesCount,
+            taskOptions,
+            fileNames,
+            tmpPath,
+            taskId: require('crypto').randomUUID()
+        };
+        logger.info(`[TAPIS DEBUG] Stored pending task data for node ${this.jobId}, taskId: ${this.pendingTaskData.taskId}`);
+    }
+
+    // Called when the actual NodeODM registers with ClusterODM
+    async onNodeRegistered(nodeHostname, nodePort, nodeToken){
+        logger.info(`[TAPIS DEBUG] Node registered: ${nodeHostname}:${nodePort} for job ${this.jobId}`);
+        this.nodeRegistered = true;
+        this.hostname = nodeHostname;
+        this.port = nodePort;
+        this.token = nodeToken;
+
+        // If we have pending task data, send it to the node now
+        if (this.pendingTaskData) {
+            await this.sendPendingTaskToNode();
+        }
+    }
+
+    // Send the pending photos to the registered node
+    async sendPendingTaskToNode(){
+        if (!this.pendingTaskData || !this.nodeRegistered) {
+            return;
+        }
+
+        try {
+            logger.info(`[TAPIS DEBUG] Sending photos to registered NodeODM ${this.hostname}:${this.port}`);
+
+            const { taskOptions, fileNames, tmpPath } = this.pendingTaskData;
+
+            // Create a NodeODM task directly on the registered node with the photos
+            const axios = require('axios');
+            const FormData = require('form-data');
+            const fs = require('fs');
+            const path = require('path');
+
+            const form = new FormData();
+            form.append('name', `tapis_job_${this.jobId}`);
+
+            // Add processing options
+            for (const [key, value] of Object.entries(taskOptions)) {
+                form.append(key, value);
+            }
+
+            // Add image files to the form
+            for (const fileName of fileNames) {
+                const filePath = path.join(tmpPath, fileName);
+                if (fs.existsSync(filePath)) {
+                    form.append('images', fs.createReadStream(filePath));
+                }
+            }
+
+            const nodeUrl = `http://${this.hostname}:${this.port}`;
+            const tokenParam = this.token ? `?token=${this.token}` : '';
+
+            logger.info(`[TAPIS DEBUG] Posting task with ${fileNames.length} images to ${nodeUrl}/task/new`);
+
+            const response = await axios.post(`${nodeUrl}/task/new${tokenParam}`, form, {
+                headers: {
+                    ...form.getHeaders()
+                },
+                timeout: 300000 // 5 minutes
+            });
+
+            this.currentTask = response.data.uuid;
+            logger.info(`[TAPIS DEBUG] Successfully created task ${this.currentTask} on registered NodeODM`);
+
+            // Clear pending data and clean up temp files
+            this.pendingTaskData = null;
+            try {
+                const utils = require('../utils');
+                utils.rmdir(tmpPath);
+                logger.info(`[TAPIS DEBUG] Cleaned up tmp directory: ${tmpPath}`);
+            } catch (e) {
+                logger.warn(`Could not clean up tmp directory: ${e.message}`);
+            }
+
+            return response.data;
+        } catch (e) {
+            logger.error(`Failed to send photos to registered NodeODM: ${e.message}`);
             throw e;
         }
     }
