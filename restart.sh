@@ -13,8 +13,7 @@
   sleep 3
 
   # Start ClusterODM-Tapis with the updated configuration
-  nohup node index.js --asr tapis-config.json --port 3000 --admin-web-port 10000 >
-  clusterodm-tapis.log 2>&1 &
+node index.js --asr tapis-config.json --port 3000 --admin-web-port 10000 >  clusterodm-tapis.log 2>&1 &
   echo $! > clusterodm-tapis.pid
 
   # Verify it's running
