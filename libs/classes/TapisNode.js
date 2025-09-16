@@ -127,10 +127,15 @@ module.exports = class TapisNode extends Node{
         try {
             logger.info(`[TAPIS DEBUG] Starting submitJob for ${imagesCount} images`);
 
-            // First, submit the job to queue to create the Tapis job
-            await this.submitJobToQueue(imagesCount, taskOptions);
+            // Check if job was already submitted during node creation
+            if (!this.jobSubmitted || !this.tapisJobId) {
+                logger.info(`[TAPIS DEBUG] Job not yet submitted, submitting to queue first`);
+                await this.submitJobToQueue(imagesCount, taskOptions);
+            } else {
+                logger.info(`[TAPIS DEBUG] Job already submitted (${this.tapisJobId}), proceeding with file upload`);
+            }
 
-            // Then upload the files to the job
+            // Upload the files to the existing job
             logger.info(`[TAPIS DEBUG] Uploading ${fileNames.length} files to job ${this.tapisJobId}`);
             await this.tapisProvider.uploadFiles(
                 this.tapisToken,
