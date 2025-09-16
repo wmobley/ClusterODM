@@ -209,7 +209,7 @@ module.exports = {
                             reject(err);
                         }else{
                             const nodesjson = JSON.parse(json);
-                            nodes = nodesjson.map(n => Node.FromJSON(n));
+                            nodes = nodesjson.map(n => Node.FromJSON(n)).filter(n => n !== null);
                             resolve();
                         }
                     });

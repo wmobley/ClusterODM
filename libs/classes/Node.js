@@ -34,6 +34,12 @@ module.exports = class Node{
     }
 
     static FromJSON(json){
+        // Safety check for null or invalid JSON
+        if (!json || !json.hostname) {
+            console.warn('Skipping invalid node JSON:', json);
+            return null;
+        }
+
         const n = new Node(json.hostname, json.port, json.token);
         for (let k in json){
             n.nodeData[k] = json[k];
