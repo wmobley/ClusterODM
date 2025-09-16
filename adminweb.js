@@ -185,9 +185,9 @@ module.exports = {
         const allNodes = nodes.all();
 
         for (let existingNode of allNodes) {
-          if (existingNode instanceof TapisNode && existingNode.jobId === tapisJobUuid) {
+          if (existingNode instanceof TapisNode && existingNode.tapisJobId === tapisJobUuid) {
             tapisNode = existingNode;
-            logger.info(`Found matching TapisNode: ${tapisNode.jobId}`);
+            logger.info(`Found matching TapisNode: ${tapisNode.jobId} (Tapis job: ${tapisNode.tapisJobId})`);
             break;
           }
         }
