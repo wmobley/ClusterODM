@@ -53,8 +53,8 @@ cat > tapis-config.json << EOF
     "token": "$WORKING_TOKEN"
   },
   "app": {
-    "appId": "nodeodm-ls6",
-    "appVersion": "1.0.5-sha-a30b980"
+    "appId": "nodeodm-ls62",
+    "appVersion": "1.0.8-clusterodm-integration"
   },
   "system": {
     "executionSystemId": "ls6",

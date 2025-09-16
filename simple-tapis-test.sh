@@ -108,8 +108,8 @@ cat > odm_job.json << EOF
 {
   "name": "odm-test-${JOB_ID}",
   "description": "ODM processing of ${JOB_ID} drone images",
-  "appId": "nodeodm-ls6",
-  "appVersion": "1.0.0",
+  "appId": "nodeodm-ls62",
+  "appVersion": "1.0.8-clusterodm-integration",
   "execSystemId": "${SYSTEM_ID}",
   "execSystemLogicalQueue": "vm-small",
   "archiveSystemId": "${SYSTEM_ID}",

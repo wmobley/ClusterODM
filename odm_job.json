@@ -1,8 +1,8 @@
 {
   "name": "odm-test-scratch-test-1756823185",
   "description": "ODM processing of scratch-test-1756823185 drone images",
-  "appId": "nodeodm-ls6",
-  "appVersion": "1.0.0",
+  "appId": "nodeodm-ls62",
+  "appVersion": "1.0.8-clusterodm-integration",
   "execSystemId": "ls6",
   "execSystemLogicalQueue": "vm-small",
   "archiveSystemId": "ls6",

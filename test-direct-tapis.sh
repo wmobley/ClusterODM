@@ -32,8 +32,8 @@ echo "🔧 Step 2: Submitting NodeODM job..."
 JOB_DEF=$(cat <<EOF
 {
   "name": "$JOB_ID",
-  "appId": "nodeodm-ls6",
-  "appVersion": "1.0.1",
+  "appId": "nodeodm-ls62",
+  "appVersion": "1.0.8-clusterodm-integration",
   "execSystemId": "ls6",
   "archiveSystemId": "ls6",
   "archiveSystemDir": "scratch/06659/wmobley/clusterodm/jobs/$JOB_ID/outputs",
