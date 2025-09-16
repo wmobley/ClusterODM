@@ -301,6 +301,7 @@ module.exports = {
           if (provider && provider.pendingTasks && provider.pendingTasks.has(tapisJobUuid)) {
             const pendingTask = provider.pendingTasks.get(tapisJobUuid);
             logger.info(`[TAPIS DEBUG] Found pending task for Tapis job ${tapisJobUuid}, creating task now`);
+            logger.info(`[TAPIS DEBUG] Pending task data: ${JSON.stringify(Object.keys(pendingTask))}`);
 
             // Register the node first
             const node = nodes.addUnique(hostname, port, token);
@@ -319,8 +320,12 @@ module.exports = {
                   form.append('name', `tapis_job_${pendingTask.jobId}`);
 
                   // Add processing options
-                  for (const [key, value] of Object.entries(pendingTask.taskOptions)) {
-                    form.append(key, value);
+                  if (pendingTask.taskOptions && typeof pendingTask.taskOptions === 'object') {
+                    for (const [key, value] of Object.entries(pendingTask.taskOptions)) {
+                      form.append(key, value);
+                    }
+                  } else {
+                    logger.warn(`[TAPIS DEBUG] taskOptions is missing or invalid: ${pendingTask.taskOptions}`);
                   }
 
                   // Add image files if available
