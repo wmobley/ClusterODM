@@ -122,6 +122,31 @@ module.exports = class TapisNode extends Node{
         }
     }
 
+    // Submit job with data upload - called by taskNew
+    async submitJob(imagesCount, taskOptions, fileNames, tmpPath){
+        try {
+            logger.info(`[TAPIS DEBUG] Starting submitJob for ${imagesCount} images`);
+
+            // First, submit the job to queue to create the Tapis job
+            await this.submitJobToQueue(imagesCount, taskOptions);
+
+            // Then upload the files to the job
+            logger.info(`[TAPIS DEBUG] Uploading ${fileNames.length} files to job ${this.tapisJobId}`);
+            await this.tapisProvider.uploadFiles(
+                this.tapisToken,
+                fileNames,
+                tmpPath,
+                this.jobId
+            );
+
+            logger.info(`[TAPIS DEBUG] Successfully completed submitJob for job ${this.tapisJobId}`);
+            return this.tapisJobId;
+        } catch (e) {
+            logger.error(`[TAPIS DEBUG] submitJob failed: ${e.message}`);
+            throw e;
+        }
+    }
+
     // Store task data to be sent when node comes online
     setPendingTaskData(imagesCount, taskOptions, fileNames, tmpPath){
         this.pendingTaskData = {
