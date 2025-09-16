@@ -873,8 +873,13 @@ module.exports = {
                         logger.error(`[TAPIS DEBUG] Cannot read tmpPath AFTER node creation: ${e.message}`);
                     }
                     
-                    if (!status.aborted) nodes.add(node);
-                    else return;
+                    if (!status.aborted && node) {
+                        nodes.add(node);
+                    } else if (!node) {
+                        logger.info(`[TAPIS DEBUG] No node returned from createNode - waiting for NodeODM registration`);
+                        // Task will be handled when NodeODM registers
+                        return;
+                    } else return;
                 }catch(e){
                     const err = new Error("No nodes available (attempted to autoscale but failed). Try again later.");
                     logger.error(`[TAPIS DEBUG] Cannot create node via autoscaling: ${e.message}`);

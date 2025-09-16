@@ -535,23 +535,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
             logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${taskId} pending NodeODM registration (files kept local)`);
 
-            // Create a lightweight placeholder node to satisfy ClusterODM's routing expectations
-            const TapisNode = require('../classes/TapisNode');
-            const placeholderNode = new TapisNode(jobId, token, this);
-            placeholderNode.tapisJobId = tapisJobId;
-            placeholderNode.pendingTaskData = {
-                taskId,
-                imagesCount,
-                taskOptions,
-                fileNames,
-                tmpPath
-            };
-
-            // Mark it as waiting for real registration
-            placeholderNode.waitingForRegistration = true;
-
-            logger.info(`[TAPIS DEBUG] Created placeholder TapisNode ${jobId} waiting for real NodeODM registration`);
-            return placeholderNode;
+            // Don't create any node - just wait for real NodeODM to register
+            logger.info(`[TAPIS DEBUG] No placeholder node created - waiting for real NodeODM to register with UUID ${tapisJobId}`);
+            return null;
         } catch (e) {
             logger.error(`Failed to create Tapis node: ${e.message}`);
             throw e;
