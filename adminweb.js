@@ -288,9 +288,19 @@ module.exports = {
           // Check for pending tasks in the Tapis provider
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
+
+          logger.info(`[TAPIS DEBUG] Checking for pending tasks - provider exists: ${!!provider}`);
+          logger.info(`[TAPIS DEBUG] Provider has pendingTasks: ${!!(provider && provider.pendingTasks)}`);
+          logger.info(`[TAPIS DEBUG] Pending tasks count: ${provider && provider.pendingTasks ? provider.pendingTasks.size : 'N/A'}`);
+          logger.info(`[TAPIS DEBUG] Looking for tapisJobUuid: ${tapisJobUuid}`);
+
+          if (provider && provider.pendingTasks) {
+            logger.info(`[TAPIS DEBUG] All pending task UUIDs: ${Array.from(provider.pendingTasks.keys()).join(', ')}`);
+          }
+
           if (provider && provider.pendingTasks && provider.pendingTasks.has(tapisJobUuid)) {
             const pendingTask = provider.pendingTasks.get(tapisJobUuid);
-            logger.info(`Found pending task for Tapis job ${tapisJobUuid}, creating task now`);
+            logger.info(`[TAPIS DEBUG] Found pending task for Tapis job ${tapisJobUuid}, creating task now`);
 
             // Register the node first
             const node = nodes.addUnique(hostname, port, token);

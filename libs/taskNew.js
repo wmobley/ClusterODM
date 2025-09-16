@@ -875,9 +875,12 @@ module.exports = {
                     
                     if (!status.aborted && node) {
                         nodes.add(node);
+                        logger.info(`[TAPIS DEBUG] Added node to cluster, total nodes: ${nodes.all().length}`);
                     } else if (!node) {
-                        logger.info(`[TAPIS DEBUG] No node returned from createNode - waiting for NodeODM registration`);
+                        logger.info(`[TAPIS DEBUG] No node returned from createNode - task stored as pending, waiting for NodeODM registration`);
+                        logger.info(`[TAPIS DEBUG] Task submission completed - no immediate processing needed`);
                         // Task will be handled when NodeODM registers
+                        finished(null, {uuid: require('crypto').randomUUID(), message: "Task queued for processing when NodeODM becomes available"});
                         return;
                     } else return;
                 }catch(e){

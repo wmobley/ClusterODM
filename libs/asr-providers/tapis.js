@@ -534,6 +534,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             });
 
             logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${taskId} pending NodeODM registration (files kept local)`);
+            logger.info(`[TAPIS DEBUG] Stored pending task - pendingTasks.size: ${this.pendingTasks.size}`);
+            logger.info(`[TAPIS DEBUG] Pending task keys: ${Array.from(this.pendingTasks.keys()).join(', ')}`);
 
             // Don't create any node - just wait for real NodeODM to register
             logger.info(`[TAPIS DEBUG] No placeholder node created - waiting for real NodeODM to register with UUID ${tapisJobId}`);
