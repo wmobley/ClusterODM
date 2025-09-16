@@ -53,14 +53,33 @@ module.exports = class TapisNode extends Node{
     // Override updateInfo to check job status instead of HTTP call
     async updateInfo(){
         try {
+            // If real NodeODM is registered, get info from it
+            if (this.nodeRegistered && this.hostname && this.port) {
+                const axios = require('axios');
+                const nodeUrl = `http://${this.hostname}:${this.port}`;
+                const tokenParam = this.token ? `?token=${this.token}` : '';
+
+                const response = await axios.get(`${nodeUrl}/info${tokenParam}`, { timeout: 5000 });
+                this.nodeData.info = response.data;
+                this.nodeData.lastRefreshed = new Date().getTime();
+                return;
+            }
+
+            // If waiting for registration, show as offline
+            if (this.waitingForRegistration) {
+                this.nodeData.info.taskQueueCount = 0;
+                this.nodeData.lastRefreshed = new Date().getTime();
+                return;
+            }
+
+            // Legacy behavior: check Tapis job status
             if (this.tapisJobId) {
                 const status = await this.tapisProvider.getJobStatus(this.tapisToken, this.tapisJobId);
                 this.updateInfoFromJobStatus(status);
             } else if (this.currentTask) {
-                // Job not yet submitted, show as busy
                 this.nodeData.info.taskQueueCount = 1;
             }
-            
+
             this.nodeData.lastRefreshed = new Date().getTime();
         } catch (e) {
             logger.warn(`Cannot update info for Tapis node ${this.jobId}: ${e.message}`);
@@ -378,7 +397,17 @@ module.exports = class TapisNode extends Node{
 
     // Override proxy methods since we don't have direct HTTP access
     proxyTargetUrl(){
-        // Return a dummy URL since Tapis jobs don't have direct HTTP endpoints
+        // If waiting for registration, return null to prevent routing
+        if (this.waitingForRegistration) {
+            return null;
+        }
+
+        // If real NodeODM is registered, use its URL
+        if (this.nodeRegistered && this.hostname && this.port) {
+            return `http://${this.hostname}:${this.port}`;
+        }
+
+        // Fallback for older virtual nodes
         return `http://tapis-job-${this.jobId}:3000`;
     }
 
@@ -391,6 +420,11 @@ module.exports = class TapisNode extends Node{
 
     // Check if job is ready for task assignment
     isReadyForTask(){
+        // If waiting for registration, not ready yet
+        if (this.waitingForRegistration) {
+            return false;
+        }
+
         return !this.jobSubmitted && this.currentTask === null;
     }
 
@@ -411,10 +445,21 @@ module.exports = class TapisNode extends Node{
 
     // Override availableSlots to handle job-specific logic
     availableSlots(){
-        if (!this.jobSubmitted || this.currentTask === null) {
-            return 1; // Can accept one task
+        // If waiting for registration, no slots available
+        if (this.waitingForRegistration) {
+            return 0;
         }
-        return 0; // Already processing a task
+
+        // If real NodeODM is registered, check its capacity
+        if (this.nodeRegistered && this.hostname && this.port) {
+            return this.nodeData.info.maxParallelTasks - this.nodeData.info.taskQueueCount;
+        }
+
+        // Legacy behavior for older virtual nodes
+        if (!this.jobSubmitted || this.currentTask === null) {
+            return 1;
+        }
+        return 0;
     }
 
     // Check if the Tapis job has completed

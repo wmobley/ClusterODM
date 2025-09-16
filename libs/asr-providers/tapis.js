@@ -504,19 +504,21 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             // Store pending task data for when NodeODM registers (keep files local)
             const taskId = require('crypto').randomUUID();
 
-            // Mark tmp directory as protected from cleanup
-            const fs = require('fs');
-            const lockFile = tmpPath + '/.tapis_pending_task';
-            try {
-                fs.writeFileSync(lockFile, JSON.stringify({
-                    tapisJobId,
-                    taskId,
-                    timestamp: Date.now(),
-                    protected: true
-                }));
-                logger.info(`[TAPIS DEBUG] Protected tmp directory: ${tmpPath}`);
-            } catch (e) {
-                logger.warn(`Could not create protection lock file: ${e.message}`);
+            // Mark tmp directory as protected from cleanup (if tmpPath exists)
+            if (tmpPath) {
+                const fs = require('fs');
+                const lockFile = tmpPath + '/.tapis_pending_task';
+                try {
+                    fs.writeFileSync(lockFile, JSON.stringify({
+                        tapisJobId,
+                        taskId,
+                        timestamp: Date.now(),
+                        protected: true
+                    }));
+                    logger.info(`[TAPIS DEBUG] Protected tmp directory: ${tmpPath}`);
+                } catch (e) {
+                    logger.warn(`Could not create protection lock file: ${e.message}`);
+                }
             }
 
             this.pendingTasks.set(tapisJobId, {
@@ -533,8 +535,23 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
             logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${taskId} pending NodeODM registration (files kept local)`);
 
-            // Return null to indicate no virtual node created - wait for real registration
-            return null;
+            // Create a lightweight placeholder node to satisfy ClusterODM's routing expectations
+            const TapisNode = require('../classes/TapisNode');
+            const placeholderNode = new TapisNode(jobId, token, this);
+            placeholderNode.tapisJobId = tapisJobId;
+            placeholderNode.pendingTaskData = {
+                taskId,
+                imagesCount,
+                taskOptions,
+                fileNames,
+                tmpPath
+            };
+
+            // Mark it as waiting for real registration
+            placeholderNode.waitingForRegistration = true;
+
+            logger.info(`[TAPIS DEBUG] Created placeholder TapisNode ${jobId} waiting for real NodeODM registration`);
+            return placeholderNode;
         } catch (e) {
             logger.error(`Failed to create Tapis node: ${e.message}`);
             throw e;

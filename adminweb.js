@@ -193,24 +193,92 @@ module.exports = {
         }
 
         if (tapisNode) {
-          // Update the TapisNode with the real node details and trigger data transfer
+          // Replace placeholder with real node data
           try {
-            await tapisNode.onNodeRegistered(hostname, port, token);
-            logger.info(`Successfully triggered data transfer for TapisNode ${tapisJobUuid}`);
+            logger.info(`Replacing placeholder TapisNode with real NodeODM ${hostname}:${port}`);
+
+            // Update the placeholder with real node details
+            tapisNode.hostname = hostname;
+            tapisNode.port = port;
+            tapisNode.token = token;
+            tapisNode.nodeRegistered = true;
+            tapisNode.waitingForRegistration = false;
+
+            // Submit the pending task to the real NodeODM
+            if (tapisNode.pendingTaskData) {
+              setTimeout(async () => {
+                try {
+                  const FormData = require('form-data');
+                  const fs = require('fs');
+                  const path = require('path');
+                  const axios = require('axios');
+
+                  const { taskOptions, fileNames, tmpPath } = tapisNode.pendingTaskData;
+
+                  const form = new FormData();
+                  form.append('name', `tapis_job_${tapisNode.jobId}`);
+
+                  // Add processing options
+                  for (const [key, value] of Object.entries(taskOptions)) {
+                    form.append(key, value);
+                  }
+
+                  // Add image files
+                  if (fileNames && tmpPath) {
+                    for (const fileName of fileNames) {
+                      const filePath = path.join(tmpPath, fileName);
+                      if (fs.existsSync(filePath)) {
+                        form.append('images', fs.createReadStream(filePath));
+                      }
+                    }
+                  }
+
+                  const nodeUrl = `http://${hostname}:${port}`;
+                  const tokenParam = token ? `?token=${token}` : '';
+
+                  logger.info(`[TAPIS DEBUG] Submitting pending task to registered NodeODM ${nodeUrl}/task/new`);
+
+                  const response = await axios.post(`${nodeUrl}/task/new${tokenParam}`, form, {
+                    headers: {
+                      ...form.getHeaders()
+                    },
+                    timeout: 300000
+                  });
+
+                  tapisNode.currentTask = response.data.uuid;
+                  logger.info(`[TAPIS DEBUG] Successfully created task ${response.data.uuid} on registered NodeODM`);
+
+                  // Clean up pending data and tmp files
+                  tapisNode.pendingTaskData = null;
+                  if (tmpPath) {
+                    try {
+                      const utils = require('./libs/utils');
+                      utils.rmdir(tmpPath);
+                      logger.info(`[TAPIS DEBUG] Cleaned up tmp directory: ${tmpPath}`);
+                    } catch (e) {
+                      logger.warn(`Could not clean up tmp directory: ${e.message}`);
+                    }
+                  }
+
+                } catch (e) {
+                  logger.error(`Failed to submit pending task to registered NodeODM: ${e.message}`);
+                }
+              }, 2000);
+            }
 
             res.json({
               success: true,
-              message: "Tapis node registered and data transfer initiated",
+              message: "Tapis placeholder node updated with real NodeODM",
               nodeId: nodes.all().indexOf(tapisNode) + 1,
               tapisJobUuid: tapisJobUuid,
               authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
             });
             return;
           } catch (e) {
-            logger.error(`Failed to trigger data transfer for TapisNode ${tapisJobUuid}: ${e.message}`);
+            logger.error(`Failed to update placeholder TapisNode ${tapisJobUuid}: ${e.message}`);
             res.status(500).json({
               success: false,
-              error: `Failed to trigger data transfer: ${e.message}`
+              error: `Failed to update placeholder node: ${e.message}`
             });
             return;
           }
