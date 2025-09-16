@@ -880,7 +880,7 @@ module.exports = {
                         logger.info(`[TAPIS DEBUG] No node returned from createNode - task stored as pending, waiting for NodeODM registration`);
                         logger.info(`[TAPIS DEBUG] Task submission completed - no immediate processing needed`);
                         // Task will be handled when NodeODM registers
-                        finished(null, {uuid: require('crypto').randomUUID(), message: "Task queued for processing when NodeODM becomes available"});
+                        // Response already sent with utils.json(res, { uuid }) above, just return
                         return;
                     } else return;
                 }catch(e){
