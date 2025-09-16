@@ -216,6 +216,94 @@ module.exports = {
           }
         } else {
           logger.warn(`No matching TapisNode found for job UUID: ${tapisJobUuid}`);
+
+          // Check for pending tasks in the Tapis provider
+          const asrProvider = require('./libs/asrProvider');
+          const provider = asrProvider.get();
+          if (provider && provider.pendingTasks && provider.pendingTasks.has(tapisJobUuid)) {
+            const pendingTask = provider.pendingTasks.get(tapisJobUuid);
+            logger.info(`Found pending task for Tapis job ${tapisJobUuid}, creating task now`);
+
+            // Register the node first
+            const node = nodes.addUnique(hostname, port, token);
+            if (node) {
+              logger.info(`Registered NodeODM ${hostname}:${port} for pending Tapis task`);
+
+              // Create and submit the task to this real node
+              setTimeout(async () => {
+                try {
+                  const FormData = require('form-data');
+                  const fs = require('fs');
+                  const path = require('path');
+                  const axios = require('axios');
+
+                  const form = new FormData();
+                  form.append('name', `tapis_job_${pendingTask.jobId}`);
+
+                  // Add processing options
+                  for (const [key, value] of Object.entries(pendingTask.taskOptions)) {
+                    form.append(key, value);
+                  }
+
+                  // Add image files if available
+                  if (pendingTask.fileNames && pendingTask.tmpPath) {
+                    for (const fileName of pendingTask.fileNames) {
+                      const filePath = path.join(pendingTask.tmpPath, fileName);
+                      if (fs.existsSync(filePath)) {
+                        form.append('images', fs.createReadStream(filePath));
+                      }
+                    }
+                  }
+
+                  const nodeUrl = `http://${hostname}:${port}`;
+                  const tokenParam = token ? `?token=${token}` : '';
+
+                  logger.info(`[TAPIS DEBUG] Submitting task to registered NodeODM ${nodeUrl}/task/new`);
+
+                  const response = await axios.post(`${nodeUrl}/task/new${tokenParam}`, form, {
+                    headers: {
+                      ...form.getHeaders()
+                    },
+                    timeout: 300000
+                  });
+
+                  logger.info(`[TAPIS DEBUG] Successfully created task ${response.data.uuid} on NodeODM for Tapis job ${tapisJobUuid}`);
+
+                  // Clean up tmp directory and protection lock
+                  if (pendingTask.tmpPath) {
+                    try {
+                      const fs = require('fs');
+                      const lockFile = pendingTask.tmpPath + '/.tapis_pending_task';
+                      if (fs.existsSync(lockFile)) {
+                        fs.unlinkSync(lockFile);
+                      }
+
+                      const utils = require('./libs/utils');
+                      utils.rmdir(pendingTask.tmpPath);
+                      logger.info(`[TAPIS DEBUG] Cleaned up tmp directory: ${pendingTask.tmpPath}`);
+                    } catch (e) {
+                      logger.warn(`Could not clean up tmp directory: ${e.message}`);
+                    }
+                  }
+
+                  // Remove from pending tasks
+                  provider.pendingTasks.delete(tapisJobUuid);
+
+                } catch (e) {
+                  logger.error(`Failed to submit task to registered NodeODM: ${e.message}`);
+                }
+              }, 2000); // Give the node time to fully start
+
+              res.json({
+                success: true,
+                message: "NodeODM registered and task submitted",
+                nodeId: nodes.all().indexOf(node) + 1,
+                tapisJobUuid: tapisJobUuid,
+                authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
+              });
+              return;
+            }
+          }
         }
       }
 

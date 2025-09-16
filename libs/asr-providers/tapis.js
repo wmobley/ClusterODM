@@ -460,7 +460,10 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         }
     }
 
-    // Override createNode to submit Tapis job and store task data
+    // Store pending tasks waiting for NodeODM registration
+    pendingTasks = new Map();
+
+    // Override createNode to just submit Tapis job and wait for NodeODM registration
     async createNode(req, imagesCount, token, hostname, status, taskOptions, fileNames, tmpPath){
         logger.info(`[TAPIS DEBUG] createNode called with imagesCount: ${imagesCount}, hostname: ${hostname}`);
 
@@ -485,7 +488,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         }
 
         const jobId = hostname; // Use hostname as job identifier
-        logger.info(`Creating Tapis node for ${imagesCount} images with ID ${jobId}`);
+        logger.info(`[TAPIS DEBUG] Submitting Tapis job for ${imagesCount} images with ID ${jobId} (no virtual node)`);
 
         try {
             this.nodesPendingCreation++;
@@ -495,22 +498,43 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 throw new Error(`Job limit reached (${this.getMachinesLimit()})`);
             }
 
-            // Create TapisNode instance
-            const node = new TapisNode(jobId, token, this);
+            // Submit Tapis job directly without creating virtual TapisNode (no file upload yet)
+            const tapisJobId = await this.submitJobWithoutData(token, jobId, imagesCount, taskOptions);
 
-            // Store the task data to be sent when NodeODM comes online
-            if (taskOptions && fileNames && tmpPath) {
-                node.setPendingTaskData(imagesCount, taskOptions, fileNames, tmpPath);
+            // Store pending task data for when NodeODM registers (keep files local)
+            const taskId = require('crypto').randomUUID();
+
+            // Mark tmp directory as protected from cleanup
+            const fs = require('fs');
+            const lockFile = tmpPath + '/.tapis_pending_task';
+            try {
+                fs.writeFileSync(lockFile, JSON.stringify({
+                    tapisJobId,
+                    taskId,
+                    timestamp: Date.now(),
+                    protected: true
+                }));
+                logger.info(`[TAPIS DEBUG] Protected tmp directory: ${tmpPath}`);
+            } catch (e) {
+                logger.warn(`Could not create protection lock file: ${e.message}`);
             }
 
-            // Submit Tapis job immediately (without data)
-            await node.submitJobToQueue(imagesCount, taskOptions || {});
+            this.pendingTasks.set(tapisJobId, {
+                taskId,
+                jobId,
+                imagesCount,
+                taskOptions,
+                fileNames,
+                tmpPath,
+                token,
+                tapisJobId,
+                req
+            });
 
-            // Mark as auto-spawned
-            node.setDockerMachine(jobId, this.getMaxRuntime(), this.getMaxUploadTime());
+            logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${taskId} pending NodeODM registration (files kept local)`);
 
-            logger.info(`Successfully created Tapis node ${jobId} and submitted job to queue`);
-            return node;
+            // Return null to indicate no virtual node created - wait for real registration
+            return null;
         } catch (e) {
             logger.error(`Failed to create Tapis node: ${e.message}`);
             throw e;
