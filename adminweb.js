@@ -302,8 +302,16 @@ module.exports = {
                     timeout: 300000
                   });
 
-                  tapisNode.currentTask = response.data.uuid;
-                  logger.info(`[TAPIS DEBUG] Successfully created task ${response.data.uuid} on registered NodeODM`);
+                  logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
+
+                  const taskUuid = response.data?.uuid;
+                  if (!taskUuid) {
+                    logger.error(`[TAPIS DEBUG] No task UUID in response. Response structure:`, JSON.stringify(response.data, null, 2));
+                    throw new Error('NodeODM response missing task UUID');
+                  }
+
+                  tapisNode.currentTask = taskUuid;
+                  logger.info(`[TAPIS DEBUG] Successfully created task ${taskUuid} on registered NodeODM`);
 
                   // Clean up pending data and tmp files
                   tapisNode.pendingTaskData = null;
@@ -429,7 +437,15 @@ module.exports = {
                     timeout: 300000
                   });
 
-                  logger.info(`[TAPIS DEBUG] Successfully created task ${response.data.uuid} on NodeODM for Tapis job ${tapisJobUuid}`);
+                  logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
+
+                  const taskUuid = response.data?.uuid;
+                  if (!taskUuid) {
+                    logger.error(`[TAPIS DEBUG] No task UUID in response. Response structure:`, JSON.stringify(response.data, null, 2));
+                    throw new Error('NodeODM response missing task UUID');
+                  }
+
+                  logger.info(`[TAPIS DEBUG] Successfully created task ${taskUuid} on NodeODM for Tapis job ${tapisJobUuid}`);
 
                   // Clean up tmp directory and protection lock
                   if (pendingTask.tmpPath) {
