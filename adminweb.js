@@ -107,6 +107,17 @@ module.exports = {
     app.post("/webhook/register-node", async (req, res) => {
       const { hostname, port, token, registrationSecret, tapisToken, registrationUuid, tapisJobUuid, nodeReady } = req.body;
 
+      // Extract Tapis JWT token from Authorization header (Bearer token)
+      let authHeaderToken = null;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        authHeaderToken = authHeader.substring(7); // Remove "Bearer " prefix
+        logger.info(`Extracted Tapis JWT token from Authorization header`);
+      }
+
+      // Use token from header if available, otherwise fall back to body
+      const effectiveTapisToken = authHeaderToken || tapisToken;
+
       // Validate required fields
       if (!hostname || !port) {
         return res.status(400).json({ error: "Missing hostname or port" });
@@ -131,14 +142,14 @@ module.exports = {
       }
 
       // Method 2: Tapis JWT token authentication (fallback for compatibility)
-      else if (tapisToken) {
+      else if (effectiveTapisToken) {
         try {
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
 
           if (provider && provider.getDriverName && provider.getDriverName() === 'tapis') {
             logger.info(`Validating Tapis JWT token for node ${hostname}:${port}`);
-            await provider.validateToken(tapisToken);
+            await provider.validateToken(effectiveTapisToken);
             authenticated = true;
             logger.info(`Tapis JWT token validation successful for ${hostname}:${port}`);
           } else {
@@ -180,12 +191,12 @@ module.exports = {
       let registeredNodeUser = null;
 
       // If we have a Tapis token, extract the user information
-      if (tapisToken) {
+      if (effectiveTapisToken) {
         try {
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
           if (provider && provider.extractUserFromToken) {
-            registeredNodeUser = provider.extractUserFromToken(tapisToken);
+            registeredNodeUser = provider.extractUserFromToken(effectiveTapisToken);
             logger.info(`Extracted user from Tapis token: ${registeredNodeUser ? registeredNodeUser.fullUser : 'none'}`);
           }
         } catch (e) {
@@ -302,7 +313,7 @@ module.exports = {
               message: "Tapis placeholder node updated with real NodeODM",
               nodeId: nodes.all().indexOf(tapisNode) + 1,
               tapisJobUuid: tapisJobUuid,
-              authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
+              authMethod: registrationUuid ? "uuid" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret")
             });
             return;
           } catch (e) {
@@ -435,7 +446,7 @@ module.exports = {
                 message: "NodeODM registered and task submitted",
                 nodeId: nodes.all().indexOf(node) + 1,
                 tapisJobUuid: tapisJobUuid,
-                authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
+                authMethod: registrationUuid ? "uuid" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret")
               });
               return;
             }
@@ -467,6 +478,17 @@ module.exports = {
     app.post("/webhook/deregister-node", async (req, res) => {
       const { hostname, port, nodeId, tapisToken, registrationSecret, registrationUuid } = req.body;
 
+      // Extract Tapis JWT token from Authorization header (Bearer token)
+      let authHeaderToken = null;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        authHeaderToken = authHeader.substring(7); // Remove "Bearer " prefix
+        logger.info(`Extracted Tapis JWT token from Authorization header for de-registration`);
+      }
+
+      // Use token from header if available, otherwise fall back to body
+      const effectiveTapisToken = authHeaderToken || tapisToken;
+
       logger.info(`Node de-registration request from ${hostname || 'unknown'}:${port || 'unknown'}`);
 
       // Authentication validation (same as registration)
@@ -486,14 +508,14 @@ module.exports = {
       }
 
       // Method 2: Tapis JWT token authentication (fallback for compatibility)
-      else if (tapisToken) {
+      else if (effectiveTapisToken) {
         try {
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
 
           if (provider && provider.getDriverName && provider.getDriverName() === 'tapis') {
             logger.info(`Validating Tapis JWT token for node de-registration ${hostname}:${port}`);
-            await provider.validateToken(tapisToken);
+            await provider.validateToken(effectiveTapisToken);
             authenticated = true;
             logger.info(`Tapis JWT token validation successful for de-registration ${hostname}:${port}`);
           } else {
