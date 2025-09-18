@@ -241,7 +241,9 @@ module.exports = class TapisNode extends Node{
                 headers: {
                     ...form.getHeaders()
                 },
-                timeout: 300000 // 5 minutes
+                timeout: 300000, // 5 minutes
+                maxBodyLength: Infinity,
+                maxContentLength: Infinity
             });
 
             this.currentTask = response.data.uuid;

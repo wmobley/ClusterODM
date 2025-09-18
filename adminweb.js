@@ -299,7 +299,9 @@ module.exports = {
                     headers: {
                       ...form.getHeaders()
                     },
-                    timeout: 300000
+                    timeout: 300000,
+                    maxBodyLength: Infinity,
+                    maxContentLength: Infinity
                   });
 
                   logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
@@ -434,7 +436,9 @@ module.exports = {
                     headers: {
                       ...form.getHeaders()
                     },
-                    timeout: 300000
+                    timeout: 300000,
+                    maxBodyLength: Infinity,
+                    maxContentLength: Infinity
                   });
 
                   logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
