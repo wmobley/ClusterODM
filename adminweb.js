@@ -105,7 +105,7 @@ module.exports = {
     });
 
     app.post("/webhook/register-node", async (req, res) => {
-      const { hostname, port, token, registrationSecret, tapisToken, registrationUuid, tapisJobUuid, nodeReady } = req.body;
+      const { hostname, port, token, registrationSecret, tapisToken, registrationUuid, tapisJobUuid, nodeReady, tapisJobOwner } = req.body;
 
       // Extract Tapis JWT token from Authorization header (Bearer token)
       let authHeaderToken = null;
@@ -141,7 +141,13 @@ module.exports = {
         }
       }
 
-      // Method 2: Tapis JWT token authentication (fallback for compatibility)
+      // Method 2: Tapis User ID authentication (simple and reliable)
+      else if (tapisJobOwner) {
+        logger.info(`Using Tapis User ID authentication for node ${hostname}:${port} (user: ${tapisJobOwner})`);
+        authenticated = true;
+      }
+
+      // Method 3: Tapis JWT token authentication (fallback for compatibility)
       else if (effectiveTapisToken) {
         try {
           const asrProvider = require('./libs/asrProvider');
@@ -190,8 +196,17 @@ module.exports = {
       let tapisNode = null;
       let registeredNodeUser = null;
 
-      // If we have a Tapis token, extract the user information
-      if (effectiveTapisToken) {
+      // Extract user information - prefer job owner, fall back to JWT token
+      if (tapisJobOwner) {
+        // Simple user ID authentication
+        registeredNodeUser = {
+          username: tapisJobOwner,
+          tenantId: 'portals', // Default tenant for TACC
+          fullUser: `${tapisJobOwner}@portals`
+        };
+        logger.info(`Using Tapis job owner for user matching: ${registeredNodeUser.fullUser}`);
+      } else if (effectiveTapisToken) {
+        // JWT token authentication (fallback)
         try {
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
@@ -313,7 +328,7 @@ module.exports = {
               message: "Tapis placeholder node updated with real NodeODM",
               nodeId: nodes.all().indexOf(tapisNode) + 1,
               tapisJobUuid: tapisJobUuid,
-              authMethod: registrationUuid ? "uuid" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret")
+              authMethod: registrationUuid ? "uuid" : (tapisJobOwner ? "tapis-user-id" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret"))
             });
             return;
           } catch (e) {
@@ -446,7 +461,7 @@ module.exports = {
                 message: "NodeODM registered and task submitted",
                 nodeId: nodes.all().indexOf(node) + 1,
                 tapisJobUuid: tapisJobUuid,
-                authMethod: registrationUuid ? "uuid" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret")
+                authMethod: registrationUuid ? "uuid" : (tapisJobOwner ? "tapis-user-id" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret"))
               });
               return;
             }

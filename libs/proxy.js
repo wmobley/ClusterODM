@@ -528,6 +528,18 @@ module.exports = {
                         }catch(e){
                             logger.error(`[TAPIS DEBUG] taskNew.process failed: ${e.message}`);
                             logger.error(`[TAPIS DEBUG] Stack: ${e.stack}`);
+
+                            // Check if this is a token expiration error
+                            if (e.message.includes('JWT token expired') || e.message.includes('token is invalid or expired')) {
+                                res.status(401).json({
+                                    error: "Authentication expired",
+                                    message: "Your session has expired. Please login again.",
+                                    details: e.message,
+                                    redirect: "/login"
+                                });
+                                return;
+                            }
+
                             die(e.message);
                             return;
                         }

@@ -175,6 +175,16 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             // Decode the payload (second part)
             const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
 
+            // Check token expiration
+            const now = Math.floor(Date.now() / 1000); // Current time in seconds
+            const exp = payload.exp; // Expiration time in seconds
+
+            if (exp && now >= exp) {
+                const expiredDate = new Date(exp * 1000);
+                logger.warn(`JWT token expired at ${expiredDate.toISOString()}`);
+                throw new Error(`JWT token expired at ${expiredDate.toISOString()}. Please login again.`);
+            }
+
             // Extract user information from claims
             const username = payload['tapis/username'] || payload.username;
             const tenantId = payload['tapis/tenant_id'] || payload.tenant_id;
@@ -185,7 +195,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     username,
                     tenantId,
                     subject: subject || `${username}@${tenantId}`,
-                    fullUser: `${username}@${tenantId}`
+                    fullUser: `${username}@${tenantId}`,
+                    exp: exp,
+                    expiresAt: exp ? new Date(exp * 1000) : null
                 };
             }
 
@@ -539,8 +551,22 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             const tapisJobId = await this.submitJobWithoutData(token, jobId, imagesCount, taskOptions);
 
             // Extract user information from token for ownership tracking
-            const userInfo = this.extractUserFromToken(token);
-            const nodeUser = userInfo ? userInfo.fullUser : null;
+            // Try to get user from request headers first (job owner), then fall back to JWT token
+            let nodeUser = null;
+
+            // Check if request has job owner info (preferred method)
+            const jobOwner = req.headers['x-tapis-job-owner'] || req.body?.tapisJobOwner;
+            if (jobOwner) {
+                nodeUser = `${jobOwner}@portals`; // Assume portals tenant
+                logger.info(`Using job owner for user tracking: ${nodeUser}`);
+            } else {
+                // Fall back to JWT token extraction
+                const userInfo = this.extractUserFromToken(token);
+                nodeUser = userInfo ? userInfo.fullUser : null;
+                if (nodeUser) {
+                    logger.info(`Using JWT token for user tracking: ${nodeUser}`);
+                }
+            }
 
             // Store pending task data for when NodeODM registers (keep files local)
             const taskId = require('crypto').randomUUID();
