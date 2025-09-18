@@ -159,6 +159,43 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         }
     }
 
+    // Extract user information from Tapis JWT token
+    extractUserFromToken(token) {
+        if (!token || typeof token !== 'string') {
+            return null;
+        }
+
+        try {
+            // JWT tokens have 3 parts separated by dots: header.payload.signature
+            const parts = token.split('.');
+            if (parts.length !== 3) {
+                return null;
+            }
+
+            // Decode the payload (second part)
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+
+            // Extract user information from claims
+            const username = payload['tapis/username'] || payload.username;
+            const tenantId = payload['tapis/tenant_id'] || payload.tenant_id;
+            const subject = payload.sub;
+
+            if (username && tenantId) {
+                return {
+                    username,
+                    tenantId,
+                    subject: subject || `${username}@${tenantId}`,
+                    fullUser: `${username}@${tenantId}`
+                };
+            }
+
+            return null;
+        } catch (e) {
+            logger.warn(`Failed to decode JWT token: ${e.message}`);
+            return null;
+        }
+    }
+
     // Create API client with authentication
     createApiClient(token){
         if (!token) {
@@ -501,6 +538,10 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             // Submit Tapis job directly without creating virtual TapisNode (no file upload yet)
             const tapisJobId = await this.submitJobWithoutData(token, jobId, imagesCount, taskOptions);
 
+            // Extract user information from token for ownership tracking
+            const userInfo = this.extractUserFromToken(token);
+            const nodeUser = userInfo ? userInfo.fullUser : null;
+
             // Store pending task data for when NodeODM registers (keep files local)
             const taskId = require('crypto').randomUUID();
 
@@ -530,6 +571,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 tmpPath,
                 token,
                 tapisJobId,
+                nodeUser,
                 req
             });
 

@@ -177,6 +177,22 @@ module.exports = {
 
       // Check if this is a Tapis node that was pre-created and needs data transfer
       let tapisNode = null;
+      let registeredNodeUser = null;
+
+      // If we have a Tapis token, extract the user information
+      if (tapisToken) {
+        try {
+          const asrProvider = require('./libs/asrProvider');
+          const provider = asrProvider.get();
+          if (provider && provider.extractUserFromToken) {
+            registeredNodeUser = provider.extractUserFromToken(tapisToken);
+            logger.info(`Extracted user from Tapis token: ${registeredNodeUser ? registeredNodeUser.fullUser : 'none'}`);
+          }
+        } catch (e) {
+          logger.warn(`Failed to extract user from Tapis token: ${e.message}`);
+        }
+      }
+
       if (tapisJobUuid && nodeReady) {
         logger.info(`Looking for pre-created TapisNode with job UUID: ${tapisJobUuid}`);
 
@@ -189,6 +205,21 @@ module.exports = {
             tapisNode = existingNode;
             logger.info(`Found matching TapisNode: ${tapisNode.jobId} (Tapis job: ${tapisNode.tapisJobId})`);
             break;
+          }
+        }
+
+        // If no exact UUID match, look for any node owned by the same user
+        if (!tapisNode && registeredNodeUser) {
+          logger.info(`No exact UUID match found, looking for node owned by user: ${registeredNodeUser.fullUser}`);
+
+          for (let existingNode of allNodes) {
+            if (existingNode instanceof TapisNode &&
+                existingNode.waitingForRegistration &&
+                existingNode.nodeUser === registeredNodeUser.fullUser) {
+              tapisNode = existingNode;
+              logger.info(`Found TapisNode owned by same user: ${tapisNode.jobId} (user: ${existingNode.nodeUser})`);
+              break;
+            }
           }
         }
 
@@ -298,9 +329,31 @@ module.exports = {
             logger.info(`[TAPIS DEBUG] All pending task UUIDs: ${Array.from(provider.pendingTasks.keys()).join(', ')}`);
           }
 
+          // First try to find exact UUID match
+          let pendingTask = null;
           if (provider && provider.pendingTasks && provider.pendingTasks.has(tapisJobUuid)) {
-            const pendingTask = provider.pendingTasks.get(tapisJobUuid);
-            logger.info(`[TAPIS DEBUG] Found pending task for Tapis job ${tapisJobUuid}, creating task now`);
+            pendingTask = provider.pendingTasks.get(tapisJobUuid);
+            logger.info(`[TAPIS DEBUG] Found pending task for exact Tapis job UUID: ${tapisJobUuid}`);
+          }
+
+          // If no exact match and we have user info, look for any task from the same user
+          if (!pendingTask && registeredNodeUser && provider && provider.pendingTasks) {
+            logger.info(`[TAPIS DEBUG] No exact UUID match, looking for pending task from user: ${registeredNodeUser.fullUser}`);
+
+            for (const [jobUuid, task] of provider.pendingTasks) {
+              if (task.nodeUser === registeredNodeUser.fullUser) {
+                pendingTask = task;
+                logger.info(`[TAPIS DEBUG] Found pending task from same user: ${jobUuid} (user: ${task.nodeUser})`);
+                // Remove from original key and add to current UUID for consistency
+                provider.pendingTasks.delete(jobUuid);
+                provider.pendingTasks.set(tapisJobUuid, pendingTask);
+                break;
+              }
+            }
+          }
+
+          if (pendingTask) {
+            logger.info(`[TAPIS DEBUG] Processing pending task, creating task now`);
             logger.info(`[TAPIS DEBUG] Pending task data: ${JSON.stringify(Object.keys(pendingTask))}`);
 
             // Register the node first

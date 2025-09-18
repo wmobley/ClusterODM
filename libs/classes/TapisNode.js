@@ -33,6 +33,8 @@ module.exports = class TapisNode extends Node{
         this.currentTask = null;
         this.pendingTaskData = null; // Store task data until node is ready
         this.nodeRegistered = false; // Track if actual NodeODM has registered
+        this.waitingForRegistration = false; // Track if we're waiting for node registration
+        this.nodeUser = null; // Store the user who owns this node (extracted from token)
         
         // Override node info with job-specific info
         this.nodeData.info = {

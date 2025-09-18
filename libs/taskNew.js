@@ -861,7 +861,7 @@ module.exports = {
                 try{
                     dmHostname = asr.generateHostname(imagesCount);
                     logger.info(`[TAPIS DEBUG] Generated hostname: ${dmHostname}, calling asr.createNode`);
-                    node = await asr.createNode(req, imagesCount, token, dmHostname, status);
+                    node = await asr.createNode(req, imagesCount, token, dmHostname, status, options, fileNames, tmpPath);
                     logger.info(`[TAPIS DEBUG] Node created successfully: ${node ? node.constructor.name : 'null'}`);
                     
                     // Debug: Check if files still exist after node creation
