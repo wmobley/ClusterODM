@@ -85,8 +85,212 @@ module.exports = {
             if (cacheValue) return cacheValue;
 
             if (!node) {
-                // For ASR providers without reference nodes, use default options
-                const defaultOptions = [];
+                // For ASR providers without reference nodes, use default ODM options
+                const defaultOptions = [
+                    {
+                        "name": "auto-boundary",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Automatically set a boundary using camera shot locations to limit the area of the reconstruction."
+                    },
+                    {
+                        "name": "boundary",
+                        "type": "string",
+                        "value": "",
+                        "domain": "json",
+                        "help": "Set a boundary using a GeoJSON polygon to limit the area of the reconstruction."
+                    },
+                    {
+                        "name": "crop",
+                        "type": "float",
+                        "value": "3",
+                        "domain": "",
+                        "help": "Automatically crop image outputs by creating a smooth buffer around the dataset boundaries, shrunk by N meters."
+                    },
+                    {
+                        "name": "pc-classify",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Classify the point cloud and generate a DEM"
+                    },
+                    {
+                        "name": "pc-rectify",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Perform ground rectification on the point cloud."
+                    },
+                    {
+                        "name": "pc-filter",
+                        "type": "float",
+                        "value": "2.5",
+                        "domain": "",
+                        "help": "Filters the point cloud by removing points that deviate more than N standard deviations from the local mean."
+                    },
+                    {
+                        "name": "pc-quality",
+                        "type": "string",
+                        "value": "medium",
+                        "domain": ["ultra", "high", "medium", "low", "lowest"],
+                        "help": "Set point cloud quality. Higher quality generates better, denser point clouds, but requires more memory and takes longer."
+                    },
+                    {
+                        "name": "feature-quality",
+                        "type": "string",
+                        "value": "high",
+                        "domain": ["ultra", "high", "medium", "low", "lowest"],
+                        "help": "Set feature extraction quality. Higher quality generates better features, but requires more memory and takes longer."
+                    },
+                    {
+                        "name": "feature-type",
+                        "type": "string",
+                        "value": "sift",
+                        "domain": ["akaze", "hahog", "orb", "sift"],
+                        "help": "Choose the algorithm for extracting keypoints and computing descriptors."
+                    },
+                    {
+                        "name": "matcher-type",
+                        "type": "string",
+                        "value": "flann",
+                        "domain": ["bruteforce", "flann", "bow"],
+                        "help": "Matcher algorithm, Fast Library for Approximate Nearest Neighbors or Bag of Words."
+                    },
+                    {
+                        "name": "orthophoto-resolution",
+                        "type": "float",
+                        "value": "5",
+                        "domain": "",
+                        "help": "Orthophoto resolution in cm / pixel."
+                    },
+                    {
+                        "name": "orthophoto-target-srs",
+                        "type": "string",
+                        "value": "",
+                        "domain": "",
+                        "help": "Target spatial reference system. Accepts EPSG codes, WKT and PROJ strings."
+                    },
+                    {
+                        "name": "orthophoto-compression",
+                        "type": "string",
+                        "value": "DEFLATE",
+                        "domain": ["JPEG", "LZW", "PACKBITS", "DEFLATE", "LZMA", "NONE"],
+                        "help": "Set the compression to use for orthophotos."
+                    },
+                    {
+                        "name": "dem-resolution",
+                        "type": "float",
+                        "value": "5",
+                        "domain": "",
+                        "help": "DSM/DTM resolution in cm / pixel."
+                    },
+                    {
+                        "name": "texturing-data-term",
+                        "type": "string",
+                        "value": "gmi",
+                        "domain": ["gmi", "area"],
+                        "help": "Data term: [area, gmi]. Default is gmi (Gradient Magnitude Inconsistency) which works well for most cases."
+                    },
+                    {
+                        "name": "gcp",
+                        "type": "string",
+                        "value": "",
+                        "domain": "json",
+                        "help": "Path to the file containing the ground control points used for georeferencing."
+                    },
+                    {
+                        "name": "use-3dmesh",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Use a full 3D mesh to compute the orthophoto instead of a 2.5D mesh."
+                    },
+                    {
+                        "name": "skip-3dmodel",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Skip generation of a full 3D model. This can save time if you only need 2D results such as orthophotos and DEMs."
+                    },
+                    {
+                        "name": "optimize-disk-space",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Delete heavy intermediate files to optimize disk space usage."
+                    },
+                    {
+                        "name": "dtm",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Use this tag to build a DTM (Digital Terrain Model, ground only) using a simple morphological filter."
+                    },
+                    {
+                        "name": "dsm",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Use this tag to build a DSM (Digital Surface Model, ground + objects) using a progressive morphological filter."
+                    },
+                    {
+                        "name": "force-gps",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Use GPS information from EXIF even if a GCP file is provided."
+                    },
+                    {
+                        "name": "gps-accuracy",
+                        "type": "float",
+                        "value": "10",
+                        "domain": "",
+                        "help": "Set a value in meters for the GPS Dilution of Precision (DOP) information for all images."
+                    },
+                    {
+                        "name": "ignore-gsd",
+                        "type": "bool",
+                        "value": "false",
+                        "domain": "",
+                        "help": "Ignore Ground Sampling Distance (GSD). GSD caps the maximum resolution of image outputs."
+                    },
+                    {
+                        "name": "max-concurrency",
+                        "type": "int",
+                        "value": "4",
+                        "domain": "",
+                        "help": "The maximum number of processes to use in various processes. Peak memory requirement is ~1GB per thread and 2 megapixel image resolution."
+                    },
+                    {
+                        "name": "min-num-features",
+                        "type": "int",
+                        "value": "10000",
+                        "domain": "",
+                        "help": "Minimum number of features to extract per image. More features lead to better results but slower execution."
+                    },
+                    {
+                        "name": "camera-lens",
+                        "type": "string",
+                        "value": "auto",
+                        "domain": ["auto", "perspective", "brown", "fisheye", "spherical", "equirectangular"],
+                        "help": "Set a camera lens model. By default the application tries to determine a lens model from the images."
+                    },
+                    {
+                        "name": "radiometric-calibration",
+                        "type": "string",
+                        "value": "none",
+                        "domain": ["none", "camera", "camera+sun"],
+                        "help": "Set the radiometric calibration to perform on images. When processing multispectral and thermal images you should set this option to obtain reflectance/temperature values."
+                    },
+                    {
+                        "name": "primary-band",
+                        "type": "string",
+                        "value": "auto",
+                        "domain": "",
+                        "help": "When processing multispectral datasets, you can specify the name of the primary band that will be used for reconstruction."
+                    }
+                ];
                 const limitedOptions = odmOptions.optionsWithLimits(defaultOptions, limits.options);
                 return optionsCache.set(token, limitedOptions);
             }
@@ -161,11 +365,8 @@ module.exports = {
             '/options': async function(req, res, user){
                 const { token, limits } = user;
                 const node = nodes.referenceNode();
-                if (!node) json(res, {'error': 'Cannot compute /options, no nodes are online.'});
-                else{
-                    const options = await getLimitedOptions(token, limits, node);
-                    json(res, options);
-                }
+                const options = await getLimitedOptions(token, limits, node);
+                json(res, options);
             }
         }
 
