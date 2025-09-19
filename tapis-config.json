@@ -27,30 +27,44 @@
     {
       "maxImages": 50,
       "nodeCount": 1,
-      "coresPerNode": 2,
-      "memoryMB": 8192,
+      "coresPerNode": 16,
+      "memoryMB": 30720,
       "maxJobTime": "02:00:00"
     },
     {
-      "maxImages": 200,
+      "maxImages": 150,
       "nodeCount": 1,
-      "coresPerNode": 4,
-      "memoryMB": 16384,
+      "coresPerNode": 16,
+      "memoryMB": 30720,
       "maxJobTime": "04:00:00"
     },
     {
-      "maxImages": 500,
-      "nodeCount": 1,
-      "coresPerNode": 8,
-      "memoryMB": 32768,
-      "maxJobTime": "08:00:00"
+      "maxImages": 300,
+      "nodeCount": 2,
+      "coresPerNode": 16,
+      "memoryMB": 30720,
+      "maxJobTime": "06:00:00"
+    },
+    {
+      "maxImages": 600,
+      "nodeCount": 3,
+      "coresPerNode": 16,
+      "memoryMB": 30720,
+      "maxJobTime": "10:00:00"
     },
     {
       "maxImages": 1000,
-      "nodeCount": 2,
-      "coresPerNode": 8,
-      "memoryMB": 32768,
-      "maxJobTime": "12:00:00"
+      "nodeCount": 4,
+      "coresPerNode": 16,
+      "memoryMB": 30720,
+      "maxJobTime": "16:00:00"
+    },
+    {
+      "maxImages": 1500,
+      "nodeCount": 6,
+      "coresPerNode": 16,
+      "memoryMB": 30720,
+      "maxJobTime": "20:00:00"
     }
   ]
 }
