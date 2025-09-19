@@ -1,6 +1,33 @@
-# ClusterODM
+# ClusterODM-Tapis
 
-A reverse proxy, load balancer and task tracker with optional cloud autoscaling capabilities for NodeODM API compatible nodes. In a nutshell, it's a program to link together multiple [NodeODM](https://github.com/OpenDroneMap/NodeODM) API compatible nodes under a single network address. The program allows to distribute tasks across multiple nodes while taking in consideration factors such as maximum number of images, queue size and slots availability. It can also automatically spin up/down nodes based on demand using cloud computing providers (currently [DigitalOcean](https://m.do.co/c/2977a7634f44), [Hetzner](https://www.hetzner.com), [Scaleway](https://scaleway.com) or [Amazon Web Services](https://aws.amazon.com/)).
+**High-Performance Computing Integration for Photogrammetry Processing**
+
+ClusterODM-Tapis is a specialized version of ClusterODM that integrates with the Tapis API to submit photogrammetry jobs to TACC supercomputing resources. It functions as a reverse proxy, load balancer and task tracker that can distribute NodeODM-compatible processing tasks to high-performance computing (HPC) systems instead of traditional cloud VMs.
+
+## Key Features
+
+- **Automatic HPC Scaling**: Submits jobs to TACC's Lonestar6 vm-small queue (16-core VMs)
+- **Smart Resource Selection**: Automatically chooses compute resources based on dataset size
+- **Split-Merge Processing**: Intelligent dataset splitting with photogrammetric overlap
+- **Auto-Node Cleanup**: Removes failed nodes after 10 minutes of connection failures
+- **Distributed Processing**: Supports 1-6 parallel VMs for datasets up to 1500+ images
+
+## Resource Mapping
+
+| Dataset Size | Node Count | Cores/Node | Memory/Node | Max Time |
+|-------------|------------|------------|-------------|----------|
+| ≤50 images  | 1          | 16         | 30GB        | 2 hours  |
+| ≤150 images | 1          | 16         | 30GB        | 4 hours  |
+| ≤300 images | 2          | 16         | 30GB        | 6 hours  |
+| ≤600 images | 3          | 16         | 30GB        | 10 hours |
+| ≤1000 images| 4          | 16         | 30GB        | 16 hours |
+| ≤1500 images| 6          | 16         | 30GB        | 20 hours |
+
+---
+
+*Based on the original [ClusterODM](https://github.com/OpenDroneMap/ClusterODM) by OpenDroneMap*
+
+A reverse proxy, load balancer and task tracker with optional cloud autoscaling capabilities for NodeODM API compatible nodes. In a nutshell, it's a program to link together multiple [NodeODM](https://github.com/OpenDroneMap/NodeODM) API compatible nodes under a single network address. The program allows to distribute tasks across multiple nodes while taking in consideration factors such as maximum number of images, queue size and slots availability.
 
 ![image](https://user-images.githubusercontent.com/1951843/57490594-b9828180-7287-11e9-9328-740cc0be8f7e.png)
 
@@ -52,6 +79,82 @@ Finally, use a web browser to connect to `http://localhost:3000`. A normal [Node
 You can also check the status of nodes via a web interface available at `http://localhost:10000`.
 
 See `node index.js --help` for all parameter options.
+
+## Tapis HPC Setup
+
+ClusterODM-Tapis integrates with TACC's supercomputing resources via the Tapis API. This setup enables automatic submission of photogrammetry jobs to Lonestar6's vm-small queue.
+
+### Prerequisites
+
+1. **Tapis Account**: Valid account on TACC's Tapis system
+2. **JWT Token**: Current authentication token for API access
+3. **NodeODM App**: `nodeodm-ls62` app deployed on Lonestar6
+4. **Configuration File**: `tapis-config.json` with your credentials
+
+### Quick Start
+
+1. **Configure Tapis credentials**:
+```bash
+cp tapis-config-sample.json tapis-config.json
+# Edit tapis-config.json with your JWT token
+```
+
+2. **Start ClusterODM-Tapis**:
+```bash
+./run-clusterodm-tapis.sh
+```
+
+3. **Connect WebODM**:
+```bash
+# In WebODM directory
+./connect_clusterodm.sh
+```
+
+### Configuration
+
+The `tapis-config.json` file controls HPC resource allocation:
+
+```json
+{
+  "tapis": {
+    "baseUrl": "https://portals.tapis.io",
+    "tenantId": "portals",
+    "token": "YOUR_JWT_TOKEN"
+  },
+  "app": {
+    "appId": "nodeodm-ls62",
+    "appVersion": "1.0.8-clusterodm-integration"
+  },
+  "system": {
+    "executionSystemId": "ls6",
+    "archiveSystemId": "ls6"
+  },
+  "imageSizeMapping": [
+    {
+      "maxImages": 50,
+      "nodeCount": 1,
+      "coresPerNode": 16,
+      "memoryMB": 30720,
+      "maxJobTime": "02:00:00"
+    }
+    // ... additional tiers
+  ]
+}
+```
+
+### Features
+
+- **Automatic Split-Merge**: Datasets ≥50 images automatically enable distributed processing
+- **Smart Overlap**: 150m photogrammetric overlap between submodels
+- **Resource Scaling**: 1-6 parallel VMs based on dataset size
+- **Failure Recovery**: Automatic node cleanup after connection failures
+- **Progress Monitoring**: Real-time job status via Tapis API
+
+### Monitoring
+
+- **Web Interface**: `http://localhost:10000` - Node status and management
+- **CLI Interface**: `telnet localhost 8080` - Administrative commands
+- **Logs**: `clusterodm-tapis.log` - Detailed processing logs
 
 ## Autoscale Setup
 

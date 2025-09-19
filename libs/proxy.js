@@ -289,6 +289,27 @@ module.exports = {
                         "value": "auto",
                         "domain": "",
                         "help": "When processing multispectral datasets, you can specify the name of the primary band that will be used for reconstruction."
+                    },
+                    {
+                        "name": "split",
+                        "type": "int",
+                        "value": "1",
+                        "domain": "",
+                        "help": "Average number of images per submodel. Set to a positive integer to enable split-merge processing for large datasets. When set to 1, ODM will automatically determine the optimal split size."
+                    },
+                    {
+                        "name": "split-overlap",
+                        "type": "float",
+                        "value": "150",
+                        "domain": "",
+                        "help": "Overlap between submodels in meters. Ensures accurate tie points and georeferencing across submodel boundaries. Recommended: 100-200m for typical drone surveys."
+                    },
+                    {
+                        "name": "sm-cluster",
+                        "type": "string",
+                        "value": "",
+                        "domain": "",
+                        "help": "URL of the split-merge cluster coordinator. Automatically set by ClusterODM when using distributed processing. Leave empty for single-machine processing."
                     }
                 ];
                 const limitedOptions = odmOptions.optionsWithLimits(defaultOptions, limits.options);

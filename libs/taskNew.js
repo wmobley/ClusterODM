@@ -446,7 +446,7 @@ module.exports = {
         }else return null;
     },
 
-    augmentTaskOptions: function(req, taskOptions, limits, token){
+    augmentTaskOptions: function(req, taskOptions, limits, token, imagesCount = 0){
         if (typeof taskOptions === "string") taskOptions = JSON.parse(taskOptions);
         if (!Array.isArray(taskOptions)) taskOptions = [];
         let odmOptions = [];
@@ -469,6 +469,33 @@ module.exports = {
                     odmOptions.push({name: to.name, value: to.value});
                 }
             });
+
+            // Auto-enable split for large datasets (50+ images) to match Tapis configuration
+            if (!foundSplit && imagesCount >= 50) {
+                logger.info(`[SPLIT-MERGE] Auto-enabling split for large dataset (${imagesCount} images)`);
+                foundSplit = true;
+
+                // Set split value based on dataset size for optimal performance
+                let splitValue = '1'; // Default: let ODM decide
+                if (imagesCount >= 500) splitValue = '200';      // Large datasets: ~200 images per submodel
+                else if (imagesCount >= 200) splitValue = '150'; // Medium datasets: ~150 images per submodel
+                else splitValue = '100';                         // Smaller datasets: ~100 images per submodel
+
+                odmOptions.push({name: 'split', value: splitValue});
+
+                // Add split-overlap for photogrammetric accuracy
+                // Use 150m overlap for drone datasets (conservative for typical flight heights)
+                let foundSplitOverlap = false;
+                taskOptions.forEach(to => {
+                    if (to.name === 'split-overlap') foundSplitOverlap = true;
+                });
+
+                if (!foundSplitOverlap) {
+                    const overlapMeters = '150'; // Conservative overlap for most drone datasets
+                    logger.info(`[SPLIT-MERGE] Auto-setting split-overlap to ${overlapMeters}m for photogrammetric accuracy`);
+                    odmOptions.push({name: 'split-overlap', value: overlapMeters});
+                }
+            }
 
             if (foundSplit && !foundSMCluster){
                 odmOptions.push({name: 'sm-cluster', value: clusterUrl });
@@ -602,7 +629,7 @@ module.exports = {
         if (node){
             // Validate options
             // Will throw an exception on failure
-            let taskOptions = odmOptions.filterOptions(this.augmentTaskOptions(req, options, limits, token), 
+            let taskOptions = odmOptions.filterOptions(this.augmentTaskOptions(req, options, limits, token, imagesCount),
                                                         await getLimitedOptions(token, limits, node));
 
             const dateC = dateCreated !== null ? new Date(dateCreated) : new Date();
