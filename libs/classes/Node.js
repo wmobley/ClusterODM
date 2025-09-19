@@ -29,6 +29,8 @@ module.exports = class Node{
         };
         this.turn = 0;
         this.transients = 0;
+        this.failureCount = 0;
+        this.firstFailureTime = null;
 
         this.timeout = 10000;
     }
@@ -44,6 +46,11 @@ module.exports = class Node{
         for (let k in json){
             n.nodeData[k] = json[k];
         }
+
+        // Restore failure tracking properties
+        n.failureCount = json.failureCount || 0;
+        n.firstFailureTime = json.firstFailureTime || null;
+
         return n;
     }
 
@@ -54,6 +61,9 @@ module.exports = class Node{
                 if (!response.data.error){
                     this.nodeData.info = response.data;
                     this.nodeData.lastRefreshed = new Date().getTime();
+                    // Reset failure tracking on successful connection
+                    this.failureCount = 0;
+                    this.firstFailureTime = null;
                 }else{
                     throw new Error(`Cannot update info for ${this}, error: ${response.data.error}`);
                 }
@@ -64,7 +74,39 @@ module.exports = class Node{
         }catch(e){
             logger.warn(`Cannot update info for ${this}: ${e.message}`);
             this.nodeData.lastRefreshed = 0;
+
+            // Track connection failures
+            this.failureCount++;
+            const now = new Date().getTime();
+
+            if (this.firstFailureTime === null) {
+                this.firstFailureTime = now;
+            }
+
+            // Auto-remove node after 10 minutes of consecutive failures
+            const failureDuration = now - this.firstFailureTime;
+            const TEN_MINUTES = 10 * 60 * 1000; // 10 minutes in milliseconds
+
+            if (failureDuration > TEN_MINUTES && this.failureCount >= 3) {
+                logger.warn(`Node ${this} has been failing for ${Math.round(failureDuration / 60000)} minutes. Auto-removing...`);
+                this.scheduleRemoval();
+            }
         }
+    }
+
+    scheduleRemoval() {
+        // Import here to avoid circular dependency
+        const netutils = require('../netutils');
+
+        // Schedule removal after a short delay to avoid disrupting current operation
+        setTimeout(async () => {
+            try {
+                logger.info(`Auto-removing failed node: ${this}`);
+                await netutils.removeAndCleanupNode(this);
+            } catch (e) {
+                logger.warn(`Failed to auto-remove node ${this}: ${e.message}`);
+            }
+        }, 5000); // 5 second delay
     }
 
     async taskInfo(taskId){
@@ -248,6 +290,11 @@ module.exports = class Node{
         let clone = JSON.parse(JSON.stringify(this.nodeData));
         delete(clone.info);
         delete(clone.lastRefreshed);
+
+        // Include failure tracking properties for persistence
+        clone.failureCount = this.failureCount;
+        clone.firstFailureTime = this.firstFailureTime;
+
         return clone;
     }
 
