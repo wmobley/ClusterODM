@@ -124,6 +124,7 @@ module.exports = {
       }
 
       logger.info(`Node registration request from ${hostname}:${port}`);
+      logger.info(`[TAPIS DEBUG] Registration payload: ${JSON.stringify(req.body)}`);
 
       // Authentication validation
       let authenticated = false;
@@ -351,6 +352,8 @@ module.exports = {
           }
         } else {
           logger.warn(`No matching TapisNode found for job UUID: ${tapisJobUuid}`);
+          logger.info(`[TAPIS DEBUG] pendingTasks keys at registration: ${provider && provider.pendingTasks ? Array.from(provider.pendingTasks.keys()).join(', ') : 'none'}`);
+          logger.info(`[TAPIS DEBUG] registrationUuid provided: ${registrationUuid || 'none'}, registeredNodeUser: ${registeredNodeUser ? registeredNodeUser.fullUser : 'none'}`);
 
           // Check for pending tasks in the Tapis provider
           const asrProvider = require('./libs/asrProvider');
@@ -510,6 +513,10 @@ module.exports = {
       if (node) {
         logger.info(`Successfully registered regular node ${hostname}:${port}`);
         node.updateInfo();
+        const provider = require('./libs/asrProvider').get();
+        if (provider && provider.pendingTasks) {
+          logger.info(`[TAPIS DEBUG] pendingTasks still outstanding after fallback registration: ${provider.pendingTasks.size}`);
+        }
         res.json({
           success: true,
           message: "Node registered successfully",

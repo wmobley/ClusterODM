@@ -88,6 +88,7 @@ export const NodeList = ({ nodes = [], getData = () => {} }) => {
         <th>RAM available</th>
         <!--<th>Last updated</th>-->
         <th>Flags</th>
+        <th>Link</th>
         <th>-</th>
       </tr>
     </thead>
@@ -110,6 +111,7 @@ export const NodeList = ({ nodes = [], getData = () => {} }) => {
           <td>${getRamAvailable(node)}</td>
           <!--<td>${node.nodeData.lastRefreshed > 0 && new Date(node.nodeData.lastRefreshed).toLocaleString()}</td>-->
           <td>${flags.join(",")}</td>
+          <td>${renderNodeLink(node)}</td>
           <td>
             <div class="btn-group" role="group">
               <${LockBtn} isLock=${node.isLocked} number=${idx + 1} />
@@ -146,4 +148,20 @@ const bytesToSize = (bytes, decimals = 2) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+};
+
+const renderNodeLink = (node) => {
+  const hostname = node?.nodeData?.hostname;
+  const port = node?.nodeData?.port;
+  if (!hostname || !port) return html`<span class="text-muted">N/A</span>`;
+
+  const token = node?.nodeData?.token;
+  const numericPort = Number(port);
+  const proto = numericPort === 443 ? "https" : "http";
+  const defaultPort = proto === "https" ? 443 : 80;
+  const portSegment = numericPort && numericPort !== defaultPort ? `:${numericPort}` : "";
+  const baseUrl = `${proto}://${hostname}${portSegment}`;
+  const fullUrl = token ? `${baseUrl}/?token=${encodeURIComponent(token)}` : baseUrl;
+
+  return html`<a href=${fullUrl} target="_blank" rel="noopener noreferrer" title=${fullUrl}>Open</a>`;
 };
