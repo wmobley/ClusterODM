@@ -388,6 +388,21 @@ module.exports = {
             }
           }
 
+          // If still no match, try matching by registration UUID prefix/suffix
+          if (!pendingTask && registrationUuid && provider && provider.pendingTasks) {
+            logger.info(`[TAPIS DEBUG] No user match, attempting registration UUID match: ${registrationUuid}`);
+            for (const [jobUuid, task] of provider.pendingTasks) {
+              if (typeof jobUuid === 'string' &&
+                  (jobUuid.startsWith(registrationUuid) || registrationUuid.startsWith(jobUuid))) {
+                pendingTask = task;
+                logger.info(`[TAPIS DEBUG] Matched pending task using registration UUID heuristic: ${jobUuid}`);
+                provider.pendingTasks.delete(jobUuid);
+                provider.pendingTasks.set(tapisJobUuid || jobUuid, pendingTask);
+                break;
+              }
+            }
+          }
+
           if (pendingTask) {
             logger.info(`[TAPIS DEBUG] Processing pending task, creating task now`);
             logger.info(`[TAPIS DEBUG] Pending task data: ${JSON.stringify(Object.keys(pendingTask))}`);
