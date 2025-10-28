@@ -352,12 +352,13 @@ module.exports = {
           }
         } else {
           logger.warn(`No matching TapisNode found for job UUID: ${tapisJobUuid}`);
-          logger.info(`[TAPIS DEBUG] pendingTasks keys at registration: ${provider && provider.pendingTasks ? Array.from(provider.pendingTasks.keys()).join(', ') : 'none'}`);
-          logger.info(`[TAPIS DEBUG] registrationUuid provided: ${registrationUuid || 'none'}, registeredNodeUser: ${registeredNodeUser ? registeredNodeUser.fullUser : 'none'}`);
 
           // Check for pending tasks in the Tapis provider
           const asrProvider = require('./libs/asrProvider');
           const provider = asrProvider.get();
+
+          logger.info(`[TAPIS DEBUG] pendingTasks keys at registration: ${provider && provider.pendingTasks ? Array.from(provider.pendingTasks.keys()).join(', ') : 'none'}`);
+          logger.info(`[TAPIS DEBUG] registrationUuid provided: ${registrationUuid || 'none'}, registeredNodeUser: ${registeredNodeUser ? registeredNodeUser.fullUser : 'none'}`);
 
           logger.info(`[TAPIS DEBUG] Checking for pending tasks - provider exists: ${!!provider}`);
           logger.info(`[TAPIS DEBUG] Provider has pendingTasks: ${!!(provider && provider.pendingTasks)}`);
