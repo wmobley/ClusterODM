@@ -40,15 +40,38 @@ logPath += path.sep;
 logPath += package_info.name + ".log";
 
 let transports = [];
+const logFormat = winston.format.combine(
+    winston.format.errors({ stack: true }),
+    winston.format.splat(),
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss.SSS' }),
+    winston.format.printf(info => {
+        const { timestamp, level, message, stack } = info;
+        const splatValues = info[Symbol.for('splat')] || [];
+        const extra = splatValues.map(value => {
+            if (typeof value === 'string') return value;
+            try {
+                return JSON.stringify(value);
+            } catch (e) {
+                return String(value);
+            }
+        }).join(' ');
+        const extraStr = extra ? ' ' + extra : '';
+        return `${timestamp} ${level}: ${stack || message}${extraStr}`;
+    })
+);
+
 if (!config.deamon){
-    transports.push(new winston.transports.Console({ level: config.logger.level, format: winston.format.simple() }));
+    transports.push(new winston.transports.Console({ level: config.logger.level, format: logFormat }));
 }
 
-let logger = winston.createLogger({ transports });
+let logger = winston.createLogger({
+    level: config.logger.level,
+    format: logFormat,
+    transports
+});
+
 logger.add(new winston.transports.File({
-        format: winston.format.simple(), 
         filename: logPath, // Write to projectname.log
-        json: false, // Write in plain text, not JSON
         maxsize: config.logger.maxFileSize, // Max size of each file
         maxFiles: config.logger.maxFiles, // Max number of files
         level: config.logger.level // Level of log messages
