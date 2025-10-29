@@ -427,10 +427,16 @@ module.exports = {
                   const form = new FormData();
                   form.append('name', `tapis_job_${pendingTask.jobId}`);
 
-                  // Add processing options
-                  if (pendingTask.taskOptions && typeof pendingTask.taskOptions === 'object') {
-                    for (const [key, value] of Object.entries(pendingTask.taskOptions)) {
-                      form.append(key, value);
+                  // Add processing options in NodeODM format
+                  if (pendingTask.taskOptions !== undefined && pendingTask.taskOptions !== null) {
+                    if (typeof pendingTask.taskOptions === 'string') {
+                      form.append('options', pendingTask.taskOptions);
+                    } else if (Array.isArray(pendingTask.taskOptions) || typeof pendingTask.taskOptions === 'object') {
+                      try {
+                        form.append('options', JSON.stringify(pendingTask.taskOptions));
+                      } catch (e) {
+                        logger.warn(`[TAPIS DEBUG] Could not serialize taskOptions: ${e.message}`);
+                      }
                     }
                   } else {
                     logger.warn(`[TAPIS DEBUG] taskOptions is missing or invalid: ${pendingTask.taskOptions}`);

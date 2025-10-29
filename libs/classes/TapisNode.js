@@ -227,9 +227,17 @@ module.exports = class TapisNode extends Node{
             const form = new FormData();
             form.append('name', `tapis_job_${this.jobId}`);
 
-            // Add processing options
-            for (const [key, value] of Object.entries(taskOptions)) {
-                form.append(key, value);
+            // Forward processing options in the same format used by /task/new
+            if (taskOptions !== undefined && taskOptions !== null) {
+                if (typeof taskOptions === 'string') {
+                    form.append('options', taskOptions);
+                } else if (Array.isArray(taskOptions) || typeof taskOptions === 'object') {
+                    try {
+                        form.append('options', JSON.stringify(taskOptions));
+                    } catch (e) {
+                        logger.warn(`[TAPIS DEBUG] Could not serialize taskOptions for ${this.jobId}: ${e.message}`);
+                    }
+                }
             }
 
             // Add image files to the form
