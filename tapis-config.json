@@ -35,28 +35,28 @@
     },
     {
       "maxImages": 100,
-      "nodeCount": 2,
+      "nodeCount": 1,
       "coresPerNode": 16,
       "memoryMB": 30720,
       "maxJobTime": "04:00:00"
     },
     {
       "maxImages": 150,
-      "nodeCount": 3,
+      "nodeCount": 1,
       "coresPerNode": 16,
       "memoryMB": 30720,
       "maxJobTime": "06:00:00"
     },
     {
       "maxImages": 200,
-      "nodeCount": 4,
+      "nodeCount": 1,
       "coresPerNode": 16,
       "memoryMB": 30720,
       "maxJobTime": "08:00:00"
     },
     {
       "maxImages": 10000,
-      "nodeCount": 4,
+      "nodeCount": 1,
       "coresPerNode": 16,
       "memoryMB": 30720,
       "maxJobTime": "12:00:00"
