@@ -5,15 +5,17 @@ import { Header } from "./component/header.mjs";
 import { RefreshButton } from "./component/refreshButton.mjs";
 import { AddInstanceButton } from "./component/addInstanceButton.mjs";
 
+const API_PREFIX = window.location.pathname.startsWith("/admin") ? "/admin" : "";
+
 const getInfoData = async () => {
   console.log("try getInfoData");
-  const res = await fetch("/r/info");
+  const res = await fetch(`${API_PREFIX}/r/info`);
   const json = await res.json();
   return json;
 };
 const getNodesData = async () => {
   console.log("try getNodesData");
-  const res = await fetch("/r/node/list");
+  const res = await fetch(`${API_PREFIX}/r/node/list`);
   const json = await res.json();
   return json;
 };
