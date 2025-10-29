@@ -8,13 +8,13 @@ import { AddInstanceButton } from "./component/addInstanceButton.mjs";
 const getInfoData = async () => {
   console.log("try getInfoData");
   const res = await fetch("/r/info");
-  const json = res.json();
+  const json = await res.json();
   return json;
 };
 const getNodesData = async () => {
   console.log("try getNodesData");
   const res = await fetch("/r/node/list");
-  const json = res.json();
+  const json = await res.json();
   return json;
 };
 const useNodes = () => {
