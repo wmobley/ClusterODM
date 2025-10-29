@@ -435,7 +435,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     archiveOnAppError: this.getConfig("job.archiveOnAppError", true),
                     parameterSet: {
                         appArgs: [
-                            { arg: "4", name: "max_concurrency", description: "Maximum number of concurrent processing tasks" },
+                            { arg: "14", name: "max_concurrency", description: "Maximum number of concurrent processing tasks" },
                             { arg: "3001", name: "nodeodm_port", description: "NodeODM service port" },
                             { arg: "https://clusterodm.tacc.utexas.edu", name: "clusterodm_url", description: "ClusterODM URL for registration" }
                         ],
