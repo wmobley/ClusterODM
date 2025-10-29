@@ -107,22 +107,6 @@ module.exports = {
     formDataParser: function(req, onFinish, options = {}){
         logger.info(`[TAPIS DEBUG] formDataParser called with ${arguments.length} arguments`);
         logger.info(`[TAPIS DEBUG] formDataParser arg[2] (options): ${JSON.stringify(arguments[2])}`);
-        
-        // TEMPORARY HACK: Force saveFilesToDir for Tapis debugging
-        if (req.url && req.url.includes('/task/new/init')) {
-            options = arguments[2] || {};
-            if (!options.saveFilesToDir) {
-                logger.info(`[TAPIS DEBUG] HACK: Forcing saveFilesToDir for /task/new/init`);
-                options.saveFilesToDir = "tmp/" + Math.random().toString(36).substr(2, 9);
-                const fs = require('fs');
-                if (!fs.existsSync(options.saveFilesToDir)) {
-                    fs.mkdirSync(options.saveFilesToDir, { recursive: true });
-                }
-                // Store the temp dir for later use
-                global.lastTempDir = options.saveFilesToDir;
-            }
-        }
-        
         if (options.saveFilesToDir === undefined) options.saveFilesToDir = false;
         if (options.parseFields === undefined) options.parseFields = true;
         if (options.limits === undefined) options.limits = {};
