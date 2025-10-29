@@ -21,7 +21,19 @@ const useNodes = () => {
   const [nodes, setNodes] = useState([]);
   const getData = () => {
     console.log("try get nodes");
-    getNodesData().then((nodes) => setNodes(nodes));
+    getNodesData()
+      .then((nodes) => {
+        if (Array.isArray(nodes)) {
+          setNodes(nodes);
+        } else {
+          console.warn("Received non-array nodes payload:", nodes);
+          setNodes([]);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch nodes:", err);
+        setNodes([]);
+      });
   };
 
   return [nodes, getData];
