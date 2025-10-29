@@ -199,6 +199,9 @@ module.exports = class TapisNode extends Node{
         this.nodeRegistered = true;
         this.hostname = nodeHostname;
         this.port = nodePort;
+        this.nodeData.hostname = nodeHostname;
+        this.nodeData.port = nodePort;
+        this.nodeData.token = nodeToken;
         this.token = nodeToken;
 
         // If we have pending task data, send it to the node now
