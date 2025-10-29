@@ -140,6 +140,27 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return this.getConfig("maxUploadTime");
     }
 
+    calculateNodeSubmissionPlan(imagesCount){
+        const jobProps = this.getJobPropertiesFor(imagesCount) || {};
+        const defaultNodeCount = this.getConfig("job.nodeCount", 1);
+        const requestedNodeCount = Math.max(1, jobProps.nodeCount || defaultNodeCount || 1);
+        const configuredMax = this.getConfig("job.maxNodesPerJob", requestedNodeCount);
+        const configuredMaxInt = parseInt(configuredMax, 10);
+        const maxNodesPerJob = Math.max(1, isNaN(configuredMaxInt) ? requestedNodeCount : configuredMaxInt);
+        const nodesToSubmit = Math.min(requestedNodeCount, maxNodesPerJob);
+
+        return {
+            jobProps,
+            requestedNodeCount,
+            maxNodesPerJob,
+            nodesToSubmit
+        };
+    }
+
+    getRequestedNodeCount(imagesCount){
+        return this.calculateNodeSubmissionPlan(imagesCount).requestedNodeCount;
+    }
+
     // Validate Tapis token
     async validateToken(token){
         if (!token || typeof token !== 'string') {
@@ -374,62 +395,104 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     }
 
     // Submit Tapis job without input data - starts NodeODM instance
-    async submitJobWithoutData(token, jobId, imagesCount, taskOptions){
+    async submitJobWithoutData(token, jobId, imagesCount, taskOptions, submissionPlan = null){
         const client = this.createApiClient(token);
-        const jobProps = this.getJobPropertiesFor(imagesCount);
 
-        const jobDefinition = {
-            name: `${jobId}`,
-            description: `ClusterODM NodeODM instance for ${imagesCount} images (waiting for data)`,
-            appId: this.getConfig("app.appId"),
-            appVersion: this.getConfig("app.appVersion"),
-            execSystemId: this.getConfig("system.executionSystemId"),
-            execSystemLogicalQueue: "vm-small",
-            archiveSystemId: this.getConfig("system.archiveSystemId"),
-            nodeCount: jobProps.nodeCount || 1,
-            coresPerNode: jobProps.coresPerNode || 1,
-            memoryMB: jobProps.memoryMB || 4096,
-            maxMinutes: this.parseJobTime(jobProps.maxJobTime || "01:00:00"),
-            archiveOnAppError: this.getConfig("job.archiveOnAppError", true),
-            parameterSet: {
-                appArgs: [
-                    { arg: "4", name: "max_concurrency", description: "Maximum number of concurrent processing tasks" },
-                    { arg: "3001", name: "nodeodm_port", description: "NodeODM service port" },
-                    { arg: "https://clusterodm.tacc.utexas.edu", name: "clusterodm_url", description: "ClusterODM URL for registration" }
-                ],
-                schedulerOptions: [
-                    { arg: `-A PT2050-DataX`, name: "TACC Allocation", description: "The TACC allocation associated with this job execution" }
-                ]
-            },
-            // No fileInputs - NodeODM will start and wait for data from ClusterODM
-            subscriptions: [{
-                enabled: true,
-                ttlMinutes: 10080,
-                description: "Portal job status notification",
-                deliveryTargets: [{
-                    deliveryMethod: "WEBHOOK",
-                    deliveryAddress: "https://ptdatax.tacc.utexas.edu/webhooks/jobs/"
-                }],
-                eventCategoryFilter: "JOB_NEW_STATUS"
-            }],
-            tags: ["portalName: PTDATAX"]
-        };
-        logger.debug(`[TAPIS DEBUG] Job definition being submitted (no input data):`, JSON.stringify(jobDefinition, null, 2));
-        logger.debug(`[TAPIS DEBUG] Submitting to endpoint: ${this.getConfig("tapis.baseUrl")}/v3/jobs/submit`);
+        const plan = submissionPlan || this.calculateNodeSubmissionPlan(imagesCount);
+        const jobProps = plan.jobProps || {};
+        const defaultCores = this.getConfig("job.coresPerNode", 1);
+        const defaultMemory = this.getConfig("job.memoryMB", 4096);
+        const defaultJobTime = this.getConfig("job.maxJobTime", "01:00:00");
+        const logicalQueue = this.getConfig("system.logicalQueue", "vm-small");
+
+        const requestedNodeCount = plan.requestedNodeCount;
+        const nodesToSubmit = plan.nodesToSubmit;
+        const maxNodesPerJob = plan.maxNodesPerJob;
+
+        if (requestedNodeCount > maxNodesPerJob) {
+            logger.warn(`[TAPIS DEBUG] Requested ${requestedNodeCount} node(s) but configuration limits to ${maxNodesPerJob}; submitting ${nodesToSubmit}`);
+        }
+
+        const submittedJobs = [];
 
         try {
-            const response = await client.post('/v3/jobs/submit', jobDefinition, {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-            const tapisJobId = response.data.result.uuid;
+            for (let i = 0; i < nodesToSubmit; i++){
+                const jobIndex = i + 1;
+                const jobName = nodesToSubmit > 1 ? `${jobId}-${jobIndex}` : jobId;
 
-            logger.info(`[TAPIS DEBUG] Successfully submitted Tapis job ${tapisJobId} for ClusterODM task ${jobId} (no input data)`);
-            logger.debug(`[TAPIS DEBUG] Full response:`, JSON.stringify(response.data, null, 2));
-            this.activeJobs.set(jobId, tapisJobId);
+                const jobDefinition = {
+                    name: `${jobName}`,
+                    description: `ClusterODM NodeODM instance for ${imagesCount} images (waiting for data) [${jobIndex}/${nodesToSubmit}]`,
+                    appId: this.getConfig("app.appId"),
+                    appVersion: this.getConfig("app.appVersion"),
+                    execSystemId: this.getConfig("system.executionSystemId"),
+                    execSystemLogicalQueue: logicalQueue,
+                    archiveSystemId: this.getConfig("system.archiveSystemId"),
+                    nodeCount: 1,
+                    coresPerNode: jobProps.coresPerNode || defaultCores || 1,
+                    memoryMB: jobProps.memoryMB || defaultMemory || 4096,
+                    maxMinutes: this.parseJobTime(jobProps.maxJobTime || defaultJobTime || "01:00:00"),
+                    archiveOnAppError: this.getConfig("job.archiveOnAppError", true),
+                    parameterSet: {
+                        appArgs: [
+                            { arg: "4", name: "max_concurrency", description: "Maximum number of concurrent processing tasks" },
+                            { arg: "3001", name: "nodeodm_port", description: "NodeODM service port" },
+                            { arg: "https://clusterodm.tacc.utexas.edu", name: "clusterodm_url", description: "ClusterODM URL for registration" }
+                        ],
+                        schedulerOptions: [
+                            { arg: `-A PT2050-DataX`, name: "TACC Allocation", description: "The TACC allocation associated with this job execution" }
+                        ]
+                    },
+                    // No fileInputs - NodeODM will start and wait for data from ClusterODM
+                    subscriptions: [{
+                        enabled: true,
+                        ttlMinutes: 10080,
+                        description: "Portal job status notification",
+                        deliveryTargets: [{
+                            deliveryMethod: "WEBHOOK",
+                            deliveryAddress: "https://ptdatax.tacc.utexas.edu/webhooks/jobs/"
+                        }],
+                        eventCategoryFilter: "JOB_NEW_STATUS"
+                    }],
+                    tags: ["portalName: PTDATAX"]
+                };
+                logger.debug(`[TAPIS DEBUG] Job definition being submitted (no input data) [${jobIndex}/${nodesToSubmit}]:`, JSON.stringify(jobDefinition, null, 2));
+                logger.debug(`[TAPIS DEBUG] Submitting to endpoint: ${this.getConfig("tapis.baseUrl")}/v3/jobs/submit`);
 
-            return tapisJobId;
+                const response = await client.post('/v3/jobs/submit', jobDefinition, {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                const tapisJobId = response.data.result.uuid;
+
+                logger.info(`[TAPIS DEBUG] Successfully submitted Tapis job ${tapisJobId} for ClusterODM task ${jobId} (${jobName}) [${jobIndex}/${nodesToSubmit}]`);
+                logger.debug(`[TAPIS DEBUG] Full response:`, JSON.stringify(response.data, null, 2));
+
+                const jobRecord = {
+                    jobName,
+                    tapisJobId,
+                    baseJobId: jobId,
+                    index: jobIndex,
+                    requestedNodeCount,
+                    nodesToSubmit
+                };
+
+                submittedJobs.push(jobRecord);
+
+                this.activeJobs.set(tapisJobId, jobRecord);
+            }
+
+            if (submittedJobs.length === 0){
+                throw new Error('Failed to submit any Tapis jobs');
+            }
+
+            return {
+                primaryJobId: submittedJobs[0]?.tapisJobId || null,
+                submittedJobs,
+                requestedNodeCount,
+                nodesToSubmit
+            };
         } catch (e) {
             const errorMsg = e.response?.data?.message || e.message;
             logger.error(`[TAPIS DEBUG] Failed to submit job. Error details:`, {
@@ -438,6 +501,18 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 data: e.response?.data,
                 message: e.message
             });
+
+            // Attempt to cancel any jobs that were already submitted in this batch
+            for (const job of submittedJobs){
+                try {
+                    await this.cancelJob(token, job.tapisJobId);
+                } catch (cancelErr) {
+                    logger.warn(`[TAPIS DEBUG] Failed to cancel partially submitted job ${job.tapisJobId}: ${cancelErr.message}`);
+                } finally {
+                    this.activeJobs.delete(job.tapisJobId);
+                }
+            }
+
             throw new Error(`Failed to submit Tapis job: ${errorMsg}`);
         }
     }
@@ -539,16 +614,27 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const jobId = hostname; // Use hostname as job identifier
         logger.info(`[TAPIS DEBUG] Submitting Tapis job for ${imagesCount} images with ID ${jobId} (no virtual node)`);
 
+        const submissionPlan = this.calculateNodeSubmissionPlan(imagesCount);
+        const nodesToSubmit = submissionPlan.nodesToSubmit || 1;
+
+        const nodesReserved = nodesToSubmit;
+
         try {
-            this.nodesPendingCreation++;
+            this.nodesPendingCreation += nodesReserved;
 
             // Check if we've reached the job limit
-            if (this.getMachinesLimit() !== -1 && this.activeJobs.size >= this.getMachinesLimit()) {
-                throw new Error(`Job limit reached (${this.getMachinesLimit()})`);
+            const machineLimit = this.getMachinesLimit();
+            if (machineLimit !== -1 && (this.activeJobs.size + nodesToSubmit) > machineLimit) {
+                throw new Error(`Job limit reached (${machineLimit}). Active: ${this.activeJobs.size}, requested: ${nodesToSubmit}`);
             }
 
             // Submit Tapis job directly without creating virtual TapisNode (no file upload yet)
-            const tapisJobId = await this.submitJobWithoutData(token, jobId, imagesCount, taskOptions);
+            const submissionResult = await this.submitJobWithoutData(token, jobId, imagesCount, taskOptions, submissionPlan);
+            const tapisJobId = submissionResult.primaryJobId;
+
+            if (!tapisJobId) {
+                throw new Error('Failed to determine Tapis job ID after submission');
+            }
 
             // Extract user information from token for ownership tracking
             // Try to get user from request headers first (job owner), then fall back to JWT token
@@ -598,10 +684,15 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 token,
                 tapisJobId,
                 nodeUser,
-                req
+                req,
+                submittedJobs: submissionResult.submittedJobs
             });
 
             logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${taskId} pending NodeODM registration (files kept local)`);
+            if (submissionResult.submittedJobs && submissionResult.submittedJobs.length > 1) {
+                const additionalJobs = submissionResult.submittedJobs.slice(1).map(job => job.tapisJobId).join(', ');
+                logger.info(`[TAPIS DEBUG] Additional Tapis jobs submitted for capacity: ${additionalJobs}`);
+            }
             logger.info(`[TAPIS DEBUG] Stored pending task - pendingTasks.size: ${this.pendingTasks.size}`);
             logger.info(`[TAPIS DEBUG] Pending task keys: ${Array.from(this.pendingTasks.keys()).join(', ')}`);
 
@@ -612,7 +703,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             logger.error(`Failed to create Tapis node: ${e.message}`);
             throw e;
         } finally {
-            this.nodesPendingCreation--;
+            this.nodesPendingCreation -= nodesReserved;
         }
     }
 
@@ -623,12 +714,12 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             try {
                 await node.cancelJob();
                 // Remove from activeJobs map to prevent counting against limit
-                this.activeJobs.delete(node.jobId);
+                this.activeJobs.delete(node.tapisJobId || node.jobId);
                 logger.info(`Cleaned up Tapis node ${node.jobId} from active jobs`);
             } catch (e) {
                 logger.warn(`Failed to cancel Tapis job for ${node}: ${e.message}`);
                 // Still remove from activeJobs to prevent hanging
-                this.activeJobs.delete(node.jobId);
+                this.activeJobs.delete(node.tapisJobId || node.jobId);
             }
         } else {
             logger.warn(`Tried to call destroyNode on a non-Tapis node: ${node}`);

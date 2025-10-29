@@ -35,6 +35,7 @@ module.exports = class TapisNode extends Node{
         this.nodeRegistered = false; // Track if actual NodeODM has registered
         this.waitingForRegistration = false; // Track if we're waiting for node registration
         this.nodeUser = null; // Store the user who owns this node (extracted from token)
+        this.additionalTapisJobs = []; // Track extra job submissions for this node setup
         
         // Override node info with job-specific info
         this.nodeData.info = {
@@ -126,12 +127,19 @@ module.exports = class TapisNode extends Node{
             logger.info(`[TAPIS DEBUG] Submitting Tapis job to queue for ${imagesCount} images (no input files yet)`);
 
             // Submit the Tapis job without input files - this starts the NodeODM instance
-            this.tapisJobId = await this.tapisProvider.submitJobWithoutData(
+            const submissionResult = await this.tapisProvider.submitJobWithoutData(
                 this.tapisToken,
                 this.jobId,
                 imagesCount,
                 taskOptions
             );
+
+            this.tapisJobId = submissionResult?.primaryJobId || null;
+            this.additionalTapisJobs = submissionResult?.submittedJobs ? submissionResult.submittedJobs.slice(1) : [];
+
+            if (!this.tapisJobId) {
+                throw new Error('Primary Tapis job ID missing after submission');
+            }
 
             this.jobSubmitted = true;
             logger.info(`Submitted Tapis job ${this.tapisJobId} for node ${this.jobId} - waiting for NodeODM to come online`);

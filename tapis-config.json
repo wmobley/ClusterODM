@@ -10,14 +10,16 @@
   },
   "system": {
     "executionSystemId": "ls6",
-    "archiveSystemId": "ls6"
+    "archiveSystemId": "ls6",
+    "logicalQueue": "vm-small"
   },
   "job": {
     "maxJobTime": "02:00:00",
     "nodeCount": 1,
     "coresPerNode": 2,
     "memoryMB": 8192,
-    "archiveOnAppError": true
+    "archiveOnAppError": true,
+    "maxNodesPerJob": 1
   },
   "maxRuntime": 7200,
   "maxUploadTime": 3600,
