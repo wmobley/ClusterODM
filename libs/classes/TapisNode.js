@@ -203,6 +203,7 @@ module.exports = class TapisNode extends Node{
         this.nodeData.port = nodePort;
         this.nodeData.token = nodeToken;
         this.token = nodeToken;
+        logger.info(`[TAPIS DEBUG] Node token updated; future proxy calls will go to http://${nodeHostname}:${nodePort}/task/<uuid>?token=${nodeToken}`);
 
         // If we have pending task data, send it to the node now
         if (this.pendingTaskData) {
@@ -219,7 +220,8 @@ module.exports = class TapisNode extends Node{
         try {
             logger.info(`[TAPIS DEBUG] Sending photos to registered NodeODM ${this.hostname}:${this.port}`);
 
-            const { taskOptions, fileNames, tmpPath } = this.pendingTaskData;
+        const { taskOptions, fileNames, tmpPath } = this.pendingTaskData;
+        logger.info(`[TAPIS DEBUG] Fetching console for task via NodeODM at http://${this.hostname}:${this.port}/task/${this.currentTask || '<pending>'}/output?token=${this.token}`);
 
             // Create a NodeODM task directly on the registered node with the photos
             const axios = require('axios');
