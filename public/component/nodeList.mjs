@@ -163,5 +163,75 @@ const renderNodeLink = (node) => {
   const baseUrl = `${proto}://${hostname}${portSegment}`;
   const fullUrl = token ? `${baseUrl}/?token=${encodeURIComponent(token)}` : baseUrl;
 
-  return html`<a href=${fullUrl} target="_blank" rel="noopener noreferrer" title=${fullUrl}>Open</a>`;
+  const clusterBaseUrl = window.location.origin;
+  const buildClusterUrl = (path, params = {}) => {
+    const query = new URLSearchParams(params);
+    const queryString = query.toString();
+    return queryString ? `${clusterBaseUrl}${path}?${queryString}` : `${clusterBaseUrl}${path}`;
+  };
+
+  const defaultParams = token ? { token } : {};
+  const infoUrl = buildClusterUrl("/info", defaultParams);
+  const taskListUrl = buildClusterUrl("/task/list", defaultParams);
+
+  const handleChange = (event) => {
+    const { value, selectedIndex } = event.target;
+    const resetSelection = () => {
+      event.target.selectedIndex = 0;
+    };
+
+    if (!value) return;
+
+    if (value === "node-open") {
+      window.open(fullUrl, "_blank", "noopener,noreferrer");
+      resetSelection();
+      return;
+    }
+
+    if (value === "cluster-info") {
+      window.open(infoUrl, "_blank", "noopener,noreferrer");
+      resetSelection();
+      return;
+    }
+
+    if (value === "cluster-task-list") {
+      window.open(taskListUrl, "_blank", "noopener,noreferrer");
+      resetSelection();
+      return;
+    }
+
+    if (value === "cluster-task-info" || value === "cluster-task-output") {
+      const uuid = window.prompt("Enter task UUID");
+      if (uuid) {
+        const trimmed = uuid.trim();
+        if (trimmed) {
+          const path = `/task/${encodeURIComponent(trimmed)}/${value === "cluster-task-info" ? "info" : "output"}`;
+          const params = { ...defaultParams };
+          if (value === "cluster-task-output") {
+            params.line = 0;
+          }
+          const url = buildClusterUrl(path, params);
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+      }
+      resetSelection();
+      return;
+    }
+
+    // Unknown option, reset to placeholder
+    if (selectedIndex !== 0) {
+      resetSelection();
+    }
+  };
+
+  return html`
+    <select class="form-select form-select-sm link-dropdown" onChange=${handleChange}>
+      <option value="">Open…</option>
+      <option value="node-open">Node UI</option>
+      <option value="cluster-info">Cluster info</option>
+      <option value="cluster-task-list">Cluster task list</option>
+      <option value="cluster-task-info">Cluster task info…</option>
+      <option value="cluster-task-output">Cluster task output…</option>
+    </select>
+  `;
 };
