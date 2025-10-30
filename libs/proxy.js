@@ -489,13 +489,16 @@ module.exports = {
                 }
 
                 let userContext = null;
+                let limits = {};
 
                 if (!authOptional || query.token){
-                    const { valid, limits } = await cloudProvider.validate(query.token);
+                    const validation = await cloudProvider.validate(query.token);
+                    limits = validation.limits || {};
 
-                    if (!valid || query._debugUnauthorized){
+                    if (!validation.valid || query._debugUnauthorized){
                         if (authOptional){
                             logger.debug(`[TAPIS DEBUG] Invalid or missing token for optional endpoint ${pathname}, continuing without authentication`);
+                            limits = {};
                         }else{
                             res.writeHead(401, "unauthorized");
                             res.end();
@@ -504,6 +507,8 @@ module.exports = {
                     }else{
                         userContext = { token: query.token, limits };
                     }
+                }else{
+                    limits = {};
                 }
 
                 if (directPath(pathname)){
