@@ -454,6 +454,7 @@ module.exports = {
             const clusterUrl = netutils.publicAddressPath('/', req, token);
 
             let foundSplit = false, foundSMCluster = false;
+            let foundToken = false;
             taskOptions.forEach(to => {
                 if (to.name === 'split'){
                     foundSplit = true;
@@ -461,6 +462,9 @@ module.exports = {
                 }else if (to.name === 'sm-cluster'){
                     foundSMCluster = true;
                     odmOptions.push({name: to.name, value: clusterUrl});
+                }else if (to.name === 'token'){
+                    foundToken = true;
+                    odmOptions.push({name: to.name, value: to.value});
                 }else{
                     odmOptions.push({name: to.name, value: to.value});
                 }
@@ -495,6 +499,10 @@ module.exports = {
 
             if (foundSplit && !foundSMCluster){
                 odmOptions.push({name: 'sm-cluster', value: clusterUrl });
+            }
+
+            if (!foundToken && config.token && config.token.length > 0){
+                odmOptions.push({ name: 'token', value: config.token });
             }
         }else{
             // Make sure the "sm-cluster" parameter is removed
