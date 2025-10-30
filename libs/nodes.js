@@ -17,7 +17,12 @@
  */
 const Node = require('./classes/Node');
 const fs = require('fs');
+const path = require('path');
 const logger = require('./logger');
+
+const DATA_DIR = 'data';
+const DATA_FILE = path.join(DATA_DIR, 'nodes.json');
+const TEMP_DATA_FILE = `${DATA_FILE}.tmp`;
 
 let nodes = [];
 let initialized = false;
@@ -188,34 +193,110 @@ module.exports = {
 
     saveToDisk: async function(){
         return new Promise((resolve, reject) => {
-            fs.writeFile('data/nodes.json', JSON.stringify(nodes), (err) => {
-                if (err){
-                    logger.warn(`Cannot save nodes to disk: ${err.message}`);
-                    reject(err);
-                }else{
-                    resolve();
+            fs.mkdir(DATA_DIR, { recursive: true }, (mkErr) => {
+                if (mkErr){
+                    logger.warn(`Cannot prepare data directory for nodes: ${mkErr.message}`);
+                    reject(mkErr);
+                    return;
                 }
+
+                const payload = JSON.stringify(nodes);
+                fs.writeFile(TEMP_DATA_FILE, payload, (tmpErr) => {
+                    if (tmpErr){
+                        logger.warn(`Cannot write temporary nodes file: ${tmpErr.message}`);
+                        reject(tmpErr);
+                    }else{
+                        const finalize = () => {
+                            fs.rename(TEMP_DATA_FILE, DATA_FILE, (renameErr) => {
+                                if (renameErr){
+                                    logger.warn(`Cannot finalize nodes file: ${renameErr.message}`);
+                                    fs.unlink(TEMP_DATA_FILE, () => {});
+                                    reject(renameErr);
+                                }else{
+                                    resolve();
+                                }
+                            });
+                        };
+
+                        fs.stat(DATA_FILE, (statErr) => {
+                            if (statErr){
+                                if (statErr.code === 'ENOENT'){
+                                    finalize();
+                                }else{
+                                    logger.warn(`Cannot inspect existing nodes file: ${statErr.message}`);
+                                    fs.unlink(TEMP_DATA_FILE, () => {});
+                                    reject(statErr);
+                                }
+                            }else{
+                                fs.unlink(DATA_FILE, (unlinkErr) => {
+                                    if (unlinkErr){
+                                        logger.warn(`Cannot remove previous nodes file: ${unlinkErr.message}`);
+                                        fs.unlink(TEMP_DATA_FILE, () => {});
+                                        reject(unlinkErr);
+                                    }else{
+                                        finalize();
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
             });
         });
     },
 
     loadFromDisk: async function(){
         return new Promise((resolve, reject) => {
-            fs.exists("data/nodes.json", (exists) => {
-                if (exists){
-                    fs.readFile("data/nodes.json", (err, json) => {
-                        if (err){
-                            logger.warn(`Cannot read nodes from disk: ${err.message}`);
-                            reject(err);
-                        }else{
-                            const nodesjson = JSON.parse(json);
-                            nodes = nodesjson.map(n => Node.FromJSON(n)).filter(n => n !== null);
-                            resolve();
-                        }
-                    });
-                }else{
+            fs.exists(DATA_FILE, (exists) => {
+                if (!exists){
                     resolve();
+                    return;
                 }
+
+                fs.readFile(DATA_FILE, 'utf8', (err, json) => {
+                    if (err){
+                        logger.warn(`Cannot read nodes from disk: ${err.message}`);
+                        reject(err);
+                        return;
+                    }
+
+                    const trimmed = (json || '').trim();
+                    if (!trimmed){
+                        nodes = [];
+                        resolve();
+                        return;
+                    }
+
+                    try{
+                        const nodesjson = JSON.parse(trimmed);
+                        nodes = nodesjson.map(n => Node.FromJSON(n)).filter(n => n !== null);
+                        resolve();
+                    }catch(parseErr){
+                        logger.warn(`Cannot parse nodes from disk (${parseErr.message}). Resetting nodes list.`);
+
+                        fs.mkdir(DATA_DIR, { recursive: true }, (mkErr) => {
+                            if (mkErr){
+                                logger.warn(`Unable to prepare data directory while handling corrupted nodes file: ${mkErr.message}`);
+                            }else{
+                                const backupPath = `${DATA_FILE}.corrupt-${Date.now()}`;
+                                fs.writeFile(backupPath, json, backupErr => {
+                                    if (backupErr){
+                                        logger.warn(`Unable to write corrupted nodes backup: ${backupErr.message}`);
+                                    }
+                                });
+
+                                fs.writeFile(DATA_FILE, '[]', resetErr => {
+                                    if (resetErr){
+                                        logger.warn(`Unable to reset nodes file: ${resetErr.message}`);
+                                    }
+                                });
+                            }
+                        });
+
+                        nodes = [];
+                        resolve();
+                    }
+                });
             });
         });
     },
