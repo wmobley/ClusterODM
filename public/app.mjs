@@ -4,6 +4,7 @@ import { NodeList } from "./component/nodeList.mjs";
 import { Header } from "./component/header.mjs";
 import { RefreshButton } from "./component/refreshButton.mjs";
 import { AddInstanceButton } from "./component/addInstanceButton.mjs";
+import { TaskList } from "./component/taskList.mjs";
 
 const API_PREFIX = window.location.pathname.startsWith("/admin") ? "/admin" : "";
 
@@ -16,6 +17,12 @@ const getInfoData = async () => {
 const getNodesData = async () => {
   console.log("try getNodesData");
   const res = await fetch(`${API_PREFIX}/r/node/list`);
+  const json = await res.json();
+  return json;
+};
+const getTasksData = async () => {
+  console.log("try getTasksData");
+  const res = await fetch(`${API_PREFIX}/r/task/list?details=true`);
   const json = await res.json();
   return json;
 };
@@ -40,22 +47,46 @@ const useNodes = () => {
 
   return [nodes, getData];
 };
+const useTasks = () => {
+  const [tasks, setTasks] = useState([]);
+  const getData = () => {
+    console.log("try get tasks");
+    getTasksData()
+      .then((list) => {
+        if (Array.isArray(list)) {
+          setTasks(list);
+        } else {
+          console.warn("Received non-array tasks payload:", list);
+          setTasks([]);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch tasks:", err);
+        setTasks([]);
+      });
+  };
+
+  return [tasks, getData];
+};
 
 export default function App() {
   const [info, setInfo] = useState({ name: "", version: "" });
   const [nodes, getNodes] = useNodes();
+  const [tasks, getTasks] = useTasks();
 
   const [autoRefresh, setAutoRefresh] = useState({ isAutoRefresh: false, intervalHandler: null });
 
   useEffect(() => {
     getInfoData().then((infoData) => setInfo(infoData));
     getNodes();
+    getTasks();
   }, []);
 
   useEffect(() => {
     if (autoRefresh.isAutoRefresh) {
       const intervalHandler = setInterval(() => {
         getNodes();
+        getTasks();
       }, 5000);
       setAutoRefresh({ ...autoRefresh, intervalHandler });
     } else {
@@ -68,7 +99,8 @@ export default function App() {
 
   return html` <div class="container">
     <${Header} info=${info} />
-    <${NodeList} nodes=${nodes} getData=${getNodes} />
+    <${NodeList} nodes=${nodes} getData=${getNodes} refreshTasks=${getTasks} />
+    <${TaskList} tasks=${tasks} />
 
     <div id="btn-area">
       <${AddInstanceButton} getNodes=${getNodes} />

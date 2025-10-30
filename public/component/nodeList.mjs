@@ -1,8 +1,8 @@
 import { deleteFetch, postFetch } from "../common.fetch.js";
-import { useEffect, useState } from "../lib/hooks.module.js";
+import { useState } from "../lib/hooks.module.js";
 import { html } from "../lib/preact.html.mjs";
 import { DeleteInstanceDialog } from "./dialog.mjs";
-export const NodeList = ({ nodes = [], getData = () => {} }) => {
+export const NodeList = ({ nodes = [], getData = () => {}, refreshTasks = () => {} }) => {
   const LockBtn = ({ isLock, number }) =>
     isLock
       ? html`<button class="btn btn-sm btn-outline-secondary mx-1" onClick=${(e) => doUnLock(number)}>
@@ -44,6 +44,7 @@ export const NodeList = ({ nodes = [], getData = () => {} }) => {
       .then((res) => res.json())
       .then((isSuccess) => {
         getData();
+        refreshTasks();
       })
       .catch((ex) => {
         console.error(ex);
@@ -57,6 +58,7 @@ export const NodeList = ({ nodes = [], getData = () => {} }) => {
       .then((res) => res.json())
       .then((isSuccess) => {
         getData();
+        refreshTasks();
       })
       .catch((ex) => {
         console.error(ex);
@@ -70,6 +72,7 @@ export const NodeList = ({ nodes = [], getData = () => {} }) => {
       .then((res) => res.json())
       .then((isSuccess) => {
         getData();
+        refreshTasks();
       })
       .catch((ex) => {
         console.error(ex);

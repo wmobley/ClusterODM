@@ -78,5 +78,36 @@ module.exports = {
             }
         }
         return result;
+    },
+
+    listSummaries: async function(){
+        if (!tasks) return [];
+
+        return Object.entries(tasks).map(([taskId, entry]) => {
+            const { token, accessed } = entry;
+            const summary = {
+                uuid: taskId,
+                token: token || "",
+                accessed: accessed || 0
+            };
+
+            const taskInfo = entry.obj && entry.obj.taskInfo ? entry.obj.taskInfo : null;
+            if (taskInfo){
+                summary.taskInfo = {
+                    name: taskInfo.name,
+                    status: taskInfo.status,
+                    dateCreated: taskInfo.dateCreated,
+                    processingTime: taskInfo.processingTime,
+                    imagesCount: taskInfo.imagesCount
+                };
+            }
+
+            const output = entry.obj && Array.isArray(entry.obj.output) ? entry.obj.output : null;
+            if (output){
+                summary.outputLength = output.length;
+            }
+
+            return summary;
+        });
     }
 };

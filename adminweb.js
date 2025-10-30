@@ -23,6 +23,8 @@ const package_info = require("./package_info");
 const cors = require("cors");
 const netutils = require("./libs/netutils");
 const asrProvider = require("./libs/asrProvider");
+const routetable = require("./libs/routetable");
+const tasktable = require("./libs/tasktable");
 
 module.exports = {
   create: function (options) {
@@ -60,6 +62,86 @@ module.exports = {
     app.get("/r/node/list", (req, res) => {
       const list = nodes.all();
       res.json(list.map((node) => nodeToJson(node)));
+    });
+
+    app.get("/r/task/list", async (req, res) => {
+      const includeDetails = req.query.details === "true";
+
+      try {
+        const routeEntries = (await routetable.findByNode()) || {};
+        const summaries = await tasktable.listSummaries();
+        const pendingMap = new Map();
+        for (const summary of summaries) {
+          pendingMap.set(summary.uuid, summary);
+        }
+
+        const tasks = await Promise.all(
+          Object.entries(routeEntries).map(async ([uuid, entry]) => {
+            const node = entry && entry.node ? entry.node : null;
+            const summary = {
+              source: "route",
+              uuid,
+              token: entry && entry.token ? entry.token : "",
+              accessed: entry && entry.accessed ? entry.accessed : 0,
+              node: null,
+            };
+
+            if (node) {
+              summary.node = {
+                hostname: node.hostname(),
+                port: node.port(),
+                name:
+                  (node.nodeData &&
+                    node.nodeData.info &&
+                    (node.nodeData.info.name ||
+                      node.nodeData.info.hostname ||
+                      node.nodeData.hostname)) ||
+                  node.toString(),
+                isOnline: typeof node.isOnline === "function" ? node.isOnline() : true,
+                token:
+                  typeof node.getToken === "function"
+                    ? node.getToken()
+                    : node.nodeData && node.nodeData.token
+                    ? node.nodeData.token
+                    : "",
+              };
+            }
+
+            if (includeDetails && node && typeof node.taskInfo === "function") {
+              try {
+                const taskInfo = await node.taskInfo(uuid);
+                if (taskInfo && !taskInfo.error) {
+                  summary.taskInfo = taskInfo;
+                } else if (taskInfo && taskInfo.error) {
+                  summary.error = taskInfo.error;
+                }
+              } catch (e) {
+                summary.error = e.message;
+              }
+            }
+
+            pendingMap.delete(uuid);
+            return summary;
+          })
+        );
+
+        // Add pending / tasktable-only entries
+        for (const pending of pendingMap.values()) {
+          tasks.push({
+            source: "pending",
+            uuid: pending.uuid,
+            token: pending.token,
+            accessed: pending.accessed,
+            taskInfo: pending.taskInfo,
+            outputLength: pending.outputLength,
+          });
+        }
+
+        res.json(tasks);
+      } catch (e) {
+        logger.error(`Failed to list tasks: ${e.message}`);
+        res.status(500).json({ error: e.message });
+      }
     });
 
     app.delete("/r/node", async (req, res) => {
