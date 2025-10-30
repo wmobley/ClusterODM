@@ -144,16 +144,23 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const jobProps = this.getJobPropertiesFor(imagesCount) || {};
         const defaultNodeCount = this.getConfig("job.nodeCount", 1);
         const requestedNodeCount = Math.max(1, jobProps.nodeCount || defaultNodeCount || 1);
-        const configuredMax = this.getConfig("job.maxNodesPerJob", requestedNodeCount);
-        const configuredMaxInt = parseInt(configuredMax, 10);
-        const maxNodesPerJob = Math.max(1, isNaN(configuredMaxInt) ? requestedNodeCount : configuredMaxInt);
-        const nodesToSubmit = Math.min(requestedNodeCount, maxNodesPerJob);
+
+        // Historically the nodeCount setting was repurposed to spin up multiple
+        // independent NodeODM jobs for a single task. For Tapis-backed nodes that
+        // behavior is undesirable because each submission already provisions a
+        // full processing environment. Instead, always submit a single Tapis job
+        // per task and treat nodeCount purely as a sizing hint for the job itself.
+        const maxNodesPerJobRaw = this.getConfig("job.maxNodesPerJob", 1);
+        const maxNodesPerJob = Math.max(1, parseInt(maxNodesPerJobRaw, 10) || 1);
+        const nodesForJob = Math.max(1, Math.min(requestedNodeCount, maxNodesPerJob));
+        const nodesToSubmit = 1;
 
         return {
             jobProps,
             requestedNodeCount,
             maxNodesPerJob,
-            nodesToSubmit
+            nodesToSubmit,
+            nodesForJob
         };
     }
 
@@ -407,10 +414,15 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
         const requestedNodeCount = plan.requestedNodeCount;
         const nodesToSubmit = plan.nodesToSubmit;
+        const nodesForJob = plan.nodesForJob || 1;
         const maxNodesPerJob = plan.maxNodesPerJob;
 
         if (requestedNodeCount > maxNodesPerJob) {
-            logger.warn(`[TAPIS DEBUG] Requested ${requestedNodeCount} node(s) but configuration limits to ${maxNodesPerJob}; submitting ${nodesToSubmit}`);
+            logger.warn(`[TAPIS DEBUG] Requested ${requestedNodeCount} compute node(s) but configuration limits to ${maxNodesPerJob}; job will reserve ${nodesForJob}`);
+        }
+
+        if (nodesToSubmit !== 1) {
+            logger.warn(`[TAPIS DEBUG] Multiple job submissions are disabled for Tapis integration; forcing single submission (requested ${nodesToSubmit}).`);
         }
 
         const submittedJobs = [];
@@ -428,7 +440,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     execSystemId: this.getConfig("system.executionSystemId"),
                     execSystemLogicalQueue: logicalQueue,
                     archiveSystemId: this.getConfig("system.archiveSystemId"),
-                    nodeCount: 1,
+                    nodeCount: nodesForJob,
                     coresPerNode: jobProps.coresPerNode || defaultCores || 1,
                     memoryMB: jobProps.memoryMB || defaultMemory || 4096,
                     maxMinutes: this.parseJobTime(jobProps.maxJobTime || defaultJobTime || "01:00:00"),
@@ -731,6 +743,42 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return [];
     }
 
+    async _ensureDir(dirPath){
+        await fs.promises.mkdir(dirPath, { recursive: true });
+    }
+
+    async _downloadDirectory(client, archiveSystemId, remotePath, localPath){
+        await this._ensureDir(localPath);
+
+        const listResponse = await client.get(`/v3/files/listings/${archiveSystemId}${remotePath}`);
+        const entries = listResponse.data.result || [];
+
+        for (const entry of entries){
+            const remoteEntryPath = `${remotePath}/${entry.name}`;
+            const localEntryPath = path.join(localPath, entry.name);
+
+            if (entry.type === 'dir' || entry.type === 'directory'){
+                await this._downloadDirectory(client, archiveSystemId, remoteEntryPath, localEntryPath);
+            } else if (entry.type === 'file'){
+                const downloadResponse = await client.get(
+                    `/v3/files/content/${archiveSystemId}${remoteEntryPath}`,
+                    { responseType: 'stream' }
+                );
+
+                await this._ensureDir(path.dirname(localEntryPath));
+                const writeStream = fs.createWriteStream(localEntryPath);
+                downloadResponse.data.pipe(writeStream);
+
+                await new Promise((resolve, reject) => {
+                    writeStream.on('finish', resolve);
+                    writeStream.on('error', reject);
+                });
+
+                logger.debug(`Downloaded file: ${remoteEntryPath}`);
+            }
+        }
+    }
+
     // Download job results from Tapis storage
     async downloadJobResults(token, jobId, tapisJobId, outputPath){
         const client = this.createApiClient(token);
@@ -738,40 +786,41 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const jobOutputPath = `/jobs/${jobId}/outputs`;
 
         try {
-            // List files in output directory
-            const listResponse = await client.get(`/v3/files/listings/${archiveSystemId}${jobOutputPath}`);
-            const files = listResponse.data.result;
-
-            if (!files || files.length === 0) {
-                throw new Error('No output files found');
-            }
-
-            // Download each file
-            for (const file of files) {
-                if (file.type === 'file') {
-                    const downloadResponse = await client.get(
-                        `/v3/files/content/${archiveSystemId}${jobOutputPath}/${file.name}`,
-                        { responseType: 'stream' }
-                    );
-
-                    const outputFilePath = path.join(outputPath, file.name);
-                    const writeStream = fs.createWriteStream(outputFilePath);
-                    
-                    downloadResponse.data.pipe(writeStream);
-                    
-                    await new Promise((resolve, reject) => {
-                        writeStream.on('finish', resolve);
-                        writeStream.on('error', reject);
-                    });
-
-                    logger.debug(`Downloaded file: ${file.name}`);
-                }
-            }
-
+            await this._downloadDirectory(client, archiveSystemId, jobOutputPath, outputPath);
             logger.info(`Successfully downloaded all output files for job ${jobId}`);
             return jobOutputPath;
         } catch (e) {
             throw new Error(`Failed to download job results: ${e.response?.data?.message || e.message}`);
+        }
+    }
+
+    async downloadJobFile(token, jobId, tapisJobId, remoteFileName, destinationPath){
+        const client = this.createApiClient(token);
+        const archiveSystemId = this.getConfig("system.archiveSystemId");
+        const remotePath = `/jobs/${jobId}/outputs/${remoteFileName}`;
+
+        try {
+            await this._ensureDir(path.dirname(destinationPath));
+
+            const response = await client.get(
+                `/v3/files/content/${archiveSystemId}${remotePath}`,
+                { responseType: 'stream' }
+            );
+
+            const writeStream = fs.createWriteStream(destinationPath);
+            response.data.pipe(writeStream);
+
+            await new Promise((resolve, reject) => {
+                writeStream.on('finish', resolve);
+                writeStream.on('error', reject);
+            });
+
+            logger.info(`Downloaded ${remoteFileName} for job ${jobId}`);
+            return destinationPath;
+        } catch (e) {
+            const status = e.response?.status;
+            const message = e.response?.data?.message || e.message;
+            throw new Error(`Failed to download ${remoteFileName} from Tapis (status ${status || 'n/a'}): ${message}`);
         }
     }
 

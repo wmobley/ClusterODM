@@ -18,6 +18,9 @@
 const Node = require('./Node');
 const logger = require('../logger');
 const statusCodes = require('../statusCodes');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 module.exports = class TapisNode extends Node{
     constructor(jobId, token, tapisProvider){
@@ -533,15 +536,42 @@ module.exports = class TapisNode extends Node{
     async taskDownload(taskId, asset){
         try {
             if (asset === 'all.zip') {
-                // Download all results as zip
-                const outputPath = '/tmp/tapis-output';
+                const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `tapis-${this.jobId}-`));
+                const directZipPath = path.join(tmpDir, 'all.zip');
+
+                // Try downloading the all.zip artifact directly from Tapis archive
+                try {
+                    await this.tapisProvider.downloadJobFile(
+                        this.tapisToken,
+                        this.jobId,
+                        this.tapisJobId,
+                        'all.zip',
+                        directZipPath
+                    );
+                    if (fs.existsSync(directZipPath) && fs.statSync(directZipPath).isFile()) {
+                        logger.info(`[TAPIS DEBUG] Retrieved all.zip directly for job ${this.jobId}`);
+                        return directZipPath;
+                    }
+                } catch (e) {
+                    logger.warn(`[TAPIS DEBUG] Direct all.zip download failed (${e.message}), falling back to full result download.`);
+                }
+
+                // Fallback: download full job results, then return all.zip if present
+                const resultsDir = path.join(tmpDir, 'outputs');
                 await this.tapisProvider.downloadJobResults(
-                    this.tapisToken, 
-                    this.jobId, 
-                    this.tapisJobId, 
-                    outputPath
+                    this.tapisToken,
+                    this.jobId,
+                    this.tapisJobId,
+                    resultsDir
                 );
-                return outputPath;
+
+                const fallbackZip = path.join(resultsDir, 'all.zip');
+                if (fs.existsSync(fallbackZip) && fs.statSync(fallbackZip).isFile()) {
+                    logger.info(`[TAPIS DEBUG] Found all.zip within downloaded results for job ${this.jobId}`);
+                    return fallbackZip;
+                }
+
+                throw new Error('all.zip not found in Tapis job results');
             }
             throw new Error(`Asset ${asset} not supported`);
         } catch (e) {
