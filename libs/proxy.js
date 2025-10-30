@@ -392,7 +392,38 @@ module.exports = {
                 const limits = user && user.limits ? user.limits : {};
                 const node = nodes.referenceNode();
                 const options = await getLimitedOptions(token, limits, node);
-                json(res, options);
+
+                let adjustedOptions = options;
+                if (Array.isArray(options)){
+                    adjustedOptions = options.map(opt => {
+                        if (!opt || typeof opt !== 'object') return opt;
+
+                        const clone = Object.assign({}, opt);
+                        if (clone.name === 'sm-cluster'){
+                            const clusterBase =
+                                (config.public_address && config.public_address.trim()) ||
+                                (config.cluster_address && config.cluster_address.trim()) ||
+                                (() => {
+                                    const forwardedHost = req.headers['x-forwarded-host'];
+                                    if (forwardedHost){
+                                        const proto = req.headers['x-forwarded-proto'] || (config.use_ssl ? 'https' : 'http');
+                                        return `${proto}://${forwardedHost}`;
+                                    }
+                                    if (req.headers.host){
+                                        return `${config.use_ssl ? 'https' : 'http'}://${req.headers.host}`;
+                                    }
+                                    return null;
+                                })();
+
+                            if (clusterBase){
+                                clone.value = clusterBase.replace(/\/+$/, '');
+                            }
+                        }
+                        return clone;
+                    });
+                }
+
+                json(res, adjustedOptions);
             }
         }
 
