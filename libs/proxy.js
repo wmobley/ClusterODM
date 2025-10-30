@@ -367,42 +367,6 @@ module.exports = {
         const proxy = new HttpProxy();
         const optionsCache = new ValueCache({expires: 60 * 60 * 1000});
 
-        const applySplitMergeDefaults = (options, req, token) => {
-            if (!config.splitmerge || !Array.isArray(options)) return options;
-
-            const buildClusterUrl = () => {
-                try{
-                    const raw = netutils.publicAddressPath('/', req, token || config.token || "");
-                    if (!raw) return null;
-                    return raw.replace(/\/+$/, '');
-                }catch(err){
-                    logger.debug(`Cannot compute cluster handoff URL: ${err.message}`);
-                    return null;
-                }
-            };
-
-            const clusterUrl = buildClusterUrl();
-
-            const findOption = name => options.find(opt => opt && opt.name === name);
-
-            const endWithOpt = findOption('end-with');
-            if (endWithOpt) endWithOpt.value = 'split';
-
-            const splitOpt = findOption('split');
-            if (splitOpt && (!splitOpt.value || splitOpt.value === '999999')) splitOpt.value = '999999';
-
-            const splitOverlapOpt = findOption('split-overlap');
-            if (splitOverlapOpt && (!splitOverlapOpt.value || splitOverlapOpt.value === '0')){
-                splitOverlapOpt.value = '150';
-            }
-
-            if (clusterUrl){
-                const smClusterOpt = findOption('sm-cluster');
-                if (smClusterOpt) smClusterOpt.value = clusterUrl;
-            }
-
-            return options;
-        };
         const publicApiPaths = new Set(['/info', '/options']);
 
         const pathHandlers = {
@@ -428,7 +392,6 @@ module.exports = {
                 const limits = user && user.limits ? user.limits : {};
                 const node = nodes.referenceNode();
                 const options = await getLimitedOptions(token, limits, node);
-                applySplitMergeDefaults(options, req, token);
                 json(res, options);
             }
         }
