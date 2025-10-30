@@ -25,9 +25,29 @@ const URL = require('url').URL;
 
 module.exports = {
     publicAddressPath: function(urlPath, req, token){
-        const addrBase = config.public_address ? 
-                    config.public_address : 
-                    `${config.use_ssl ? "https" : "http"}://${req.headers.host}`;
+        const buildBase = () => {
+            if (config.public_address && config.public_address.trim().length > 0){
+                return config.public_address.trim();
+            }
+
+            const forwardedHost = req.headers['x-forwarded-host'];
+            const forwardedProto = req.headers['x-forwarded-proto'];
+            if (forwardedHost){
+                return `${forwardedProto || (config.use_ssl ? 'https' : 'http')}://${forwardedHost}`;
+            }
+
+            if (req.headers.host){
+                return `${config.use_ssl ? 'https' : 'http'}://${req.headers.host}`;
+            }
+
+            if (config.cluster_address && config.cluster_address.trim().length > 0){
+                return config.cluster_address.trim();
+            }
+
+            return `${config.use_ssl ? 'https' : 'http'}://localhost:${config.port || 3000}`;
+        };
+
+        const addrBase = buildBase();
         const url = new URL(urlPath, addrBase);
         if (token){
             url.search = `token=${token}`;
