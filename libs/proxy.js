@@ -365,9 +365,11 @@ module.exports = {
 
         const proxy = new HttpProxy();
         const optionsCache = new ValueCache({expires: 60 * 60 * 1000});
+        const publicApiPaths = new Set(['/info', '/options']);
+
         const pathHandlers = {
             '/info': function(req, res, user){
-                const { limits } = user;
+                const limits = user && user.limits ? user.limits : {};
                 const node = nodes.referenceNode();
                 
                 json(res, {
@@ -384,7 +386,8 @@ module.exports = {
             },
 
             '/options': async function(req, res, user){
-                const { token, limits } = user;
+                const token = user ? user.token : null;
+                const limits = user && user.limits ? user.limits : {};
                 const node = nodes.referenceNode();
                 const options = await getLimitedOptions(token, limits, node);
                 json(res, options);
@@ -427,6 +430,8 @@ module.exports = {
                 const urlParts = url.parse(req.url, true);
                 const { query, pathname } = urlParts;
                 
+                const authOptional = publicApiPaths.has(pathname);
+
                 // Extract token from Authorization header if not in query params
                 if (!query.token && req.headers.authorization) {
                     const authHeader = req.headers.authorization;
@@ -436,8 +441,10 @@ module.exports = {
                     }
                 } else if (query.token) {
                     logger.info(`[TAPIS DEBUG] Using JWT token from query parameter for ${pathname}`);
-                } else {
+                } else if (!authOptional) {
                     logger.info(`[TAPIS DEBUG] No JWT token provided for ${pathname}`);
+                } else {
+                    logger.debug(`[TAPIS DEBUG] No JWT token provided for optional endpoint ${pathname}`);
                 }
 
                 if (publicPath(pathname)){
@@ -481,13 +488,22 @@ module.exports = {
                     return;
                 }
 
-                // Validate user token
-                const { valid, limits } = await cloudProvider.validate(query.token);
-                if (!valid || query._debugUnauthorized){
-                    // json(res, {error: "Invalid authentication token"});
-                    res.writeHead(401, "unauthorized");
-                    res.end();
-                    return;
+                let userContext = null;
+
+                if (!authOptional || query.token){
+                    const { valid, limits } = await cloudProvider.validate(query.token);
+
+                    if (!valid || query._debugUnauthorized){
+                        if (authOptional){
+                            logger.debug(`[TAPIS DEBUG] Invalid or missing token for optional endpoint ${pathname}, continuing without authentication`);
+                        }else{
+                            res.writeHead(401, "unauthorized");
+                            res.end();
+                            return;
+                        }
+                    }else{
+                        userContext = { token: query.token, limits };
+                    }
                 }
 
                 if (directPath(pathname)){
@@ -496,7 +512,7 @@ module.exports = {
                 }
 
                 if (pathHandlers[pathname]){
-                    (pathHandlers[pathname])(req, res, { token: query.token, limits });
+                    (pathHandlers[pathname])(req, res, userContext);
                     return;
                 }
 
