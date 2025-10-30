@@ -187,6 +187,7 @@ module.exports = {
         let completedFiles = 0;
         let requestEnded = false;
         let formFinished = false;
+        let requestAborted = false;
         
         const checkCompletion = () => {
             logger.info(`[TAPIS DEBUG] Completion check: expectedFiles=${expectedFiles}, completedFiles=${completedFiles}, requestEnded=${requestEnded}, formFinished=${formFinished}`);
@@ -289,7 +290,9 @@ module.exports = {
                         
                         // Check conditions synchronously before any async operations
                         const tmpDir = path.dirname(saveTo);
-                        const shouldDelete = !uploadCompleted && !global.taskProcessingDirs?.has(tmpDir);
+                        const shouldDelete = !uploadCompleted &&
+                                             !global.taskProcessingDirs?.has(tmpDir) &&
+                                             (requestAborted || !requestEnded);
                         
                         if (shouldDelete) {
                             // Double-check the conditions right before deletion (race condition protection)
@@ -316,7 +319,11 @@ module.exports = {
                         }
                     };
                     req.on('close', handleClose);
-                    req.on('abort', handleClose);
+                    req.on('abort', () => {
+                        logger.info(`[TAPIS DEBUG] Request abort event triggered`);
+                        requestAborted = true;
+                        handleClose();
+                    });
 
                     saveStream = fs.createWriteStream(saveTo);
                     
@@ -412,6 +419,11 @@ module.exports = {
         
         req.on('close', () => {
             logger.info(`[TAPIS DEBUG] Request stream closed`);
+        });
+        
+        req.on('aborted', () => {
+            logger.info(`[TAPIS DEBUG] Request stream aborted`);
+            requestAborted = true;
         });
         
         req.on('error', (err) => {

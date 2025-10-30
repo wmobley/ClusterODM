@@ -650,7 +650,8 @@ module.exports = {
                             },
                             cb => {
                                 taskNew.formDataParser(req, function(params){
-                                    if (!params.imagesCount) cb(new Error("No files uploaded."));
+                                    const totalFiles = Array.isArray(params.fileNames) ? params.fileNames.length : 0;
+                                    if (!params.imagesCount && totalFiles === 0) cb(new Error("No files uploaded."));
                                     else if (params.error) cb(new Error(params.error));
                                     else cb();
                                 }, { saveFilesToDir, parseFields: true});
