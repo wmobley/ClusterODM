@@ -72,6 +72,23 @@ module.exports = {
         // JSON helper for responses
         const json = utils.json;
 
+        const normalizeAddress = (addr) => {
+            if (!addr) return '';
+            if (addr.startsWith('::ffff:')) return addr.substring(7);
+            return addr;
+        };
+
+        const isInternalRequest = (remoteAddress, localAddress) => {
+            const remote = normalizeAddress(remoteAddress);
+            const local = normalizeAddress(localAddress);
+
+            if (!remote) return false;
+            if (remote === '127.0.0.1' || remote === '::1') return true;
+            if (local && remote === local) return true;
+
+            return false;
+        };
+
         const forwardToReferenceNode = (req, res) => {
             const referenceNode = nodes.referenceNode();
             if (referenceNode){
@@ -463,7 +480,20 @@ module.exports = {
                 const urlParts = url.parse(req.url, true);
                 const { query, pathname } = urlParts;
                 
-                const authOptional = publicApiPaths.has(pathname);
+                let authOptional = publicApiPaths.has(pathname);
+
+                const connection = req.socket || req.connection;
+                const remoteAddress = connection && connection.remoteAddress;
+                const localAddress = connection && connection.localAddress;
+                const isDownloadRequest = pathname.startsWith('/task/') && pathname.indexOf('/download/') !== -1;
+
+                if (!authOptional &&
+                    config.allow_local_download_bypass &&
+                    isDownloadRequest &&
+                    isInternalRequest(remoteAddress, localAddress)){
+                    authOptional = true;
+                    logger.debug(`[TAPIS DEBUG] Allowing JWT bypass for internal download ${pathname} from ${remoteAddress}`);
+                }
 
                 // Extract token from Authorization header if not in query params
                 if (!query.token && req.headers.authorization) {

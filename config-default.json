@@ -17,5 +17,6 @@
     "stale-uploads-timeout": 0,
     "ssl-key": "",
     "ssl-cert": "",
-    "asr": ""
+    "asr": "",
+    "allow-local-download-bypass": false
 }
