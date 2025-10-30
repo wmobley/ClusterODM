@@ -653,7 +653,7 @@ module.exports = {
                                     if (!params.imagesCount) cb(new Error("No files uploaded."));
                                     else if (params.error) cb(new Error(params.error));
                                     else cb();
-                                }, { saveFilesToDir, parseFields: false});
+                                }, { saveFilesToDir, parseFields: true});
                             }
                         ], err => {
                             if (err) json(res, {error: err.message});
