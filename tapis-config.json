@@ -19,7 +19,7 @@
     "coresPerNode": 2,
     "memoryMB": 8192,
     "archiveOnAppError": true,
-    "maxNodesPerJob": 4
+    "maxNodesPerJob": 1
   },
   "maxRuntime": 7200,
   "maxUploadTime": 3600,
