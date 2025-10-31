@@ -458,6 +458,7 @@ module.exports = {
 
             let foundSplit = false, foundSMCluster = false;
             let foundToken = false;
+            let foundUseExif = false;
             taskOptions.forEach(to => {
                 if (to.name === 'split'){
                     foundSplit = true;
@@ -467,6 +468,9 @@ module.exports = {
                     odmOptions.push({name: to.name, value: clusterUrl});
                 }else if (to.name === 'token'){
                     foundToken = true;
+                    odmOptions.push({name: to.name, value: to.value});
+                }else if (to.name === 'use-exif'){
+                    foundUseExif = true;
                     odmOptions.push({name: to.name, value: to.value});
                 }else{
                     odmOptions.push({name: to.name, value: to.value});
@@ -522,6 +526,11 @@ module.exports = {
                     const overlapMeters = '150'; // Conservative overlap for most drone datasets
                     logger.info(`[SPLIT-MERGE] Auto-setting split-overlap to ${overlapMeters}m for photogrammetric accuracy`);
                     odmOptions.push({name: 'split-overlap', value: overlapMeters});
+                }
+
+                if (!foundUseExif) {
+                    logger.info(`[SPLIT-MERGE] Enabling use-exif to ensure georeferencing for split workflow`);
+                    odmOptions.push({ name: 'use-exif', value: true });
                 }
             }
 
