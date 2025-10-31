@@ -8,6 +8,7 @@ import { TaskList } from "./component/taskList.mjs";
 import { LoginForm } from "./component/loginForm.mjs";
 
 const API_PREFIX = window.location.pathname.startsWith("/admin") ? "/admin" : "";
+const DEFAULT_AUTH_MODE = "tapis-jwt";
 
 const LoadingScreen = () =>
   html`<div class="loading-screen">
@@ -23,11 +24,33 @@ export default function App() {
     error: null,
     legacy: false,
   });
+  const [authConfig, setAuthConfig] = useState({ mode: "loading" });
   const [info, setInfo] = useState({ name: "", version: "" });
   const [nodes, setNodes] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const refreshIntervalRef = useRef(null);
+
+  const loadAuthConfig = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_PREFIX}/auth/config`, {
+        credentials: "include",
+        cache: "no-cache",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+
+      const data = await response.json();
+      setAuthConfig(data);
+      return data;
+    } catch (err) {
+      console.warn("Failed to load auth config:", err);
+      setAuthConfig((prev) => (prev && prev.mode ? prev : { mode: "unknown" }));
+      return null;
+    }
+  }, []);
 
   const checkSession = useCallback(async () => {
     try {
@@ -47,16 +70,24 @@ export default function App() {
         error: null,
         legacy: !!data.legacy,
       });
+      if (data.mode) {
+        setAuthConfig((prev) => Object.assign({}, prev, { mode: data.mode }));
+      }
       return true;
     } catch (err) {
       setAuth({ status: "unauthenticated", user: null, error: null, legacy: false });
+      loadAuthConfig().catch(() => {});
       return false;
     }
-  }, []);
+  }, [loadAuthConfig]);
 
   useEffect(() => {
     checkSession();
   }, [checkSession]);
+
+  useEffect(() => {
+    loadAuthConfig().catch(() => {});
+  }, [loadAuthConfig]);
 
   const getJson = useCallback(
     async (path) => {
@@ -154,14 +185,42 @@ export default function App() {
   }, [auth.status, autoRefreshEnabled, loadNodes, loadTasks]);
 
   const handleLogin = useCallback(
-    async ({ username, password }) => {
+    async (credentials = {}) => {
+      const mode =
+        authConfig.mode && authConfig.mode !== "loading" && authConfig.mode !== "unknown"
+          ? authConfig.mode
+          : DEFAULT_AUTH_MODE;
+
+      const payload = {};
+      if (mode === "tapis-jwt") {
+        const token = (credentials.token || "").trim();
+        if (!token) {
+          const message = "A Tapis JWT token is required.";
+          setAuth({ status: "unauthenticated", user: null, error: message, legacy: false });
+          throw new Error(message);
+        }
+        payload.token = token;
+      } else {
+        const username = (credentials.username || "").trim();
+        const password = credentials.password || "";
+        if (!username || !password) {
+          const message = "Username and password are required.";
+          setAuth({ status: "unauthenticated", user: null, error: message, legacy: false });
+          throw new Error(message);
+        }
+        payload.username = username;
+        payload.password = password;
+      }
+
+      setAuth((prev) => ({ ...prev, error: null }));
+
       const response = await fetch(`${API_PREFIX}/auth/login`, {
         method: "POST",
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(payload),
       });
 
       let data = {};
@@ -179,13 +238,17 @@ export default function App() {
 
       setAuth({
         status: "authenticated",
-        user: data.user || { username },
+        user: data.user || null,
         error: null,
-        legacy: false,
+        legacy: !!data.legacy,
       });
+      if (data.mode) {
+        setAuthConfig((prev) => Object.assign({}, prev, { mode: data.mode }));
+      }
       await loadAll().catch((err) => console.error("Failed to refresh data after login:", err));
+      await loadAuthConfig().catch(() => {});
     },
-    [loadAll]
+    [authConfig.mode, loadAll, loadAuthConfig]
   );
 
   const handleLogout = useCallback(async () => {
@@ -203,15 +266,23 @@ export default function App() {
       }
       setAutoRefreshEnabled(false);
       setAuth({ status: "unauthenticated", user: null, error: null, legacy: false });
+      loadAuthConfig().catch(() => {});
     }
-  }, []);
+  }, [loadAuthConfig]);
 
   if (auth.status === "loading") {
     return html`<${LoadingScreen} />`;
   }
 
   if (auth.status !== "authenticated") {
-    return html`<${LoginForm} onSubmit=${handleLogin} error=${auth.error} />`;
+    return html`
+      <${LoginForm}
+        onSubmit=${handleLogin}
+        error=${auth.error}
+        mode=${authConfig.mode}
+        authConfig=${authConfig}
+      />
+    `;
   }
 
   return html`

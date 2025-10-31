@@ -35,7 +35,12 @@ const routetable = require('./libs/routetable');
         password: config.admin_pass,
         webodm: config.webodm,
         sessionSecret: config.admin_session_secret,
-        useSecureCookies: !!config.use_ssl
+        useSecureCookies: !!config.use_ssl,
+        tapisJwt: {
+            enabled: config.admin_web_use_tapis_jwt,
+            allowedTenants: config.admin_web_allowed_tenants || [],
+            allowedUsers: config.admin_web_allowed_users || []
+        }
     });
     const cloudProvider = (require('./libs/cloudProvider')).initialize(config.cloud_provider);
     await (require('./libs/asrProvider')).initialize(config.asr);

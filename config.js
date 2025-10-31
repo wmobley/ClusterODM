@@ -36,8 +36,9 @@ let argDefs = {
             'cloud-provider', 'downloads-from-s3', 'token', 'log-level',
             'upload-max-speed', 'ssl-key', 'ssl-cert', 'secure-port',
             'public-address', 'config', 'admin-session-secret',
-            'asr', 'registration-secret', 'webodm-base-url'],
-    boolean: ['splitmerge', 'debug', 'allow-local-download-bypass', 'force-node-downloads', 'webodm-require-staff'],
+            'asr', 'registration-secret', 'webodm-base-url',
+            'admin-web-allowed-tenants', 'admin-web-allowed-users'],
+    boolean: ['splitmerge', 'debug', 'allow-local-download-bypass', 'force-node-downloads', 'webodm-require-staff', 'admin-web-use-tapis-jwt'],
     alias: {
         p: 'port',
         c: 'cloud-provider'
@@ -134,6 +135,22 @@ const mergeWebodmConfig = () => {
 };
 
 config.webodm = mergeWebodmConfig();
+
+const parseList = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (typeof value === 'string') {
+        return value
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+    }
+    return [];
+};
+
+config.admin_web_allowed_tenants = parseList(config.admin_web_allowed_tenants);
+config.admin_web_allowed_users = parseList(config.admin_web_allowed_users);
+config.admin_web_use_tapis_jwt = Boolean(config.admin_web_use_tapis_jwt);
 
 config.use_ssl = config.ssl_key && config.ssl_cert;
 module.exports = config;

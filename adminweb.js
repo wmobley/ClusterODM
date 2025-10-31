@@ -29,28 +29,99 @@ const asrProvider = require("./libs/asrProvider");
 const routetable = require("./libs/routetable");
 const tasktable = require("./libs/tasktable");
 
+const decodeJwtPayload = (token) => {
+  try {
+    const parts = typeof token === "string" ? token.split(".") : [];
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padLength = (4 - (base64.length % 4 || 4)) % 4;
+    const padded = base64.padEnd(base64.length + padLength, "=");
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    return JSON.parse(json);
+  } catch (err) {
+    logger.warn(`Failed to decode JWT payload: ${err.message}`);
+    return null;
+  }
+};
+
+const buildUserInfo = (auth) => ({
+  username: auth.username,
+  userId: auth.userId,
+  email: auth.email || null,
+  tenantId: auth.tenantId || null,
+});
+
+const destroySession = (req, res, status, payload) => {
+  if (!req.session) {
+    res.clearCookie("connect.sid");
+    return res.status(status).json(payload);
+  }
+  req.session.destroy((err) => {
+    if (err) {
+      logger.warn(`Failed to destroy session: ${err.message}`);
+    }
+    res.clearCookie("connect.sid");
+    res.status(status).json(payload);
+  });
+};
+
 module.exports = {
   create: function (options) {
     logger.info("Starting admin web interface on " + options.port);
 
-    const useWebodmAuth = options.webodm && options.webodm.baseUrl;
+    const tapisJwtConfig = options.tapisJwt || {};
+    const useTapisJwt = !!tapisJwtConfig.enabled;
+
     const webodmConfig = options.webodm || {};
     const webodmBaseUrl = webodmConfig.baseUrl;
     const webodmTimeout = webodmConfig.timeoutMs || 10000;
     const webodmRequireStaff = webodmConfig.requireStaff !== false;
+    const useWebodmAuth = !useTapisJwt && !!webodmBaseUrl;
 
     if (useWebodmAuth) {
       logger.info(`Admin interface using WebODM authentication at ${webodmBaseUrl}`);
+    } else if (useTapisJwt) {
+      logger.info("Admin interface using Tapis JWT authentication");
     } else if (options.password) {
       logger.warn("WebODM authentication not configured; falling back to static admin password");
     } else {
       logger.warn(`No WebODM authentication or admin password specified, admin interface is unsecured`);
     }
 
+    const allowedTenants = Array.isArray(tapisJwtConfig.allowedTenants)
+      ? tapisJwtConfig.allowedTenants.filter(Boolean)
+      : [];
+    const allowedUsers = Array.isArray(tapisJwtConfig.allowedUsers)
+      ? tapisJwtConfig.allowedUsers.filter(Boolean)
+      : [];
+
+    const authMode = useTapisJwt
+      ? "tapis-jwt"
+      : useWebodmAuth
+      ? "webodm"
+      : options.password
+      ? "basic"
+      : "none";
+
+    const authConfigResponse = { mode: authMode };
+    if (useTapisJwt) {
+      authConfigResponse.tapisJwt = {
+        allowedTenants,
+        allowedUsers,
+      };
+    } else if (useWebodmAuth) {
+      authConfigResponse.webodm = {
+        baseUrl: webodmBaseUrl,
+        requireStaff: webodmRequireStaff,
+      };
+    }
+
     const app = express();
     app.use(cors());
 
-    if (useWebodmAuth) {
+    const sessionAuthEnabled = useTapisJwt || useWebodmAuth;
+
+    if (sessionAuthEnabled) {
       const sessionSecret =
         (options.sessionSecret && typeof options.sessionSecret === "string" && options.sessionSecret.trim().length > 0)
           ? options.sessionSecret
@@ -84,44 +155,10 @@ module.exports = {
     const ensureAuthFallback = (_req, _res, next) => next();
     let ensureAuth = ensureAuthFallback;
 
-    if (useWebodmAuth) {
-      const loginUrl = new URL("/api/token-auth/", webodmBaseUrl).toString();
-      const adminUsersUrl = new URL("/api/admin/users/", webodmBaseUrl).toString();
+    const loginUrl = useWebodmAuth ? new URL("/api/token-auth/", webodmBaseUrl).toString() : null;
+    const adminUsersUrl = useWebodmAuth ? new URL("/api/admin/users/", webodmBaseUrl).toString() : null;
 
-      const decodeJwtPayload = (token) => {
-        try {
-          const parts = token.split(".");
-          if (parts.length < 2) return null;
-          const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-          const padded = base64.padEnd(base64.length + (4 - (base64.length % 4 || 4)) % 4, "=");
-          const json = Buffer.from(padded, "base64").toString("utf8");
-          return JSON.parse(json);
-        } catch (err) {
-          logger.warn(`Failed to decode WebODM JWT payload: ${err.message}`);
-          return null;
-        }
-      };
-
-      const buildUserInfo = (auth) => ({
-        username: auth.username,
-        userId: auth.userId,
-        email: auth.email || null,
-      });
-
-      const destroySession = (req, res, status, payload) => {
-        if (!req.session) {
-          res.clearCookie("connect.sid");
-          return res.status(status).json(payload);
-        }
-        req.session.destroy((err) => {
-          if (err) {
-            logger.warn(`Failed to destroy session: ${err.message}`);
-          }
-          res.clearCookie("connect.sid");
-          res.status(status).json(payload);
-        });
-      };
-
+    if (sessionAuthEnabled) {
       const requireAuth = (req, res, next) => {
         const auth = req.session && req.session.webodmAuth;
         if (!auth) {
@@ -137,11 +174,113 @@ module.exports = {
 
       ensureAuth = requireAuth;
 
-      app.post("/auth/login", async (req, res) => {
-        if (!useWebodmAuth) {
-          return res.status(501).json({ error: "WebODM authentication not configured" });
+      app.post("/auth/logout", requireAuth, (req, res) => {
+        destroySession(req, res, 200, { success: true });
+      });
+
+      app.get("/auth/session", (req, res) => {
+        const auth = req.session && req.session.webodmAuth;
+        if (!auth) {
+          return res.status(401).json({ error: "Not authenticated" });
+        }
+        if (auth.exp && auth.exp * 1000 <= Date.now()) {
+          return destroySession(req, res, 401, { error: "Session expired" });
+        }
+        res.json({
+          user: buildUserInfo(auth),
+          expiresAt: auth.exp ? auth.exp * 1000 : null,
+          legacy: false,
+          mode: authMode,
+        });
+      });
+
+      app.get("/signout", requireAuth, (req, res) => {
+        destroySession(req, res, 200, {
+          success: true,
+          message: 'Signed out. <br /> <a href="/">Sign back in</a>',
+        });
+      });
+    } else {
+      app.post("/auth/logout", (_req, res) => res.json({ success: true }));
+      app.get("/auth/session", (_req, res) => {
+        res.json({
+          user: {
+            username: options.password ? "admin" : "guest",
+          },
+          legacy: true,
+          mode: authMode,
+        });
+      });
+      app.get("/signout", (_req, res) => {
+        res.status(401).send('Signed out. <br /> <a href="/">Sign back in</a>');
+      });
+    }
+
+    app.post("/auth/login", async (req, res) => {
+      if (useTapisJwt) {
+        if (!sessionAuthEnabled || !req.session) {
+          logger.error("Session support is required for Tapis JWT authentication but is not available");
+          return res.status(500).json({ error: "Authentication misconfiguration" });
         }
 
+        const { token } = req.body || {};
+        if (!token || typeof token !== "string") {
+          return res.status(400).json({ error: "Missing token" });
+        }
+
+        const payload = decodeJwtPayload(token);
+        if (!payload) {
+          return res.status(401).json({ error: "Invalid token" });
+        }
+
+        const expiresAtMs = payload.exp ? payload.exp * 1000 : null;
+        if (expiresAtMs && expiresAtMs <= Date.now()) {
+          return res.status(401).json({ error: "Token expired" });
+        }
+
+        const username = payload["tapis/username"] || payload.username || payload.sub;
+        if (!username) {
+          return res.status(401).json({ error: "Token missing username claim" });
+        }
+
+        const tenantId = payload["tapis/tenant_id"] || payload.tenant_id || null;
+        if (allowedTenants.length > 0 && (!tenantId || !allowedTenants.includes(tenantId))) {
+          logger.warn(`Rejected Tapis token for tenant ${tenantId || "unknown"} (not in allowed list)`);
+          return res.status(403).json({ error: "Tenant not allowed" });
+        }
+
+        if (allowedUsers.length > 0 && !allowedUsers.includes(username)) {
+          logger.warn(`Rejected Tapis token for user ${username} (not in allowed list)`);
+          return res.status(403).json({ error: "User not allowed" });
+        }
+
+        const authPayload = {
+          token,
+          username,
+          userId: payload["tapis/user_id"] || payload.user_id || payload.sub || null,
+          email: payload.email || payload["tapis/email"] || null,
+          tenantId,
+          exp: payload.exp,
+          iat: payload.iat,
+        };
+
+        return req.session.regenerate((regenErr) => {
+          if (regenErr) {
+            logger.error(`Failed to regenerate session: ${regenErr.message}`);
+            return res.status(500).json({ error: "Failed to create session" });
+          }
+
+          req.session.webodmAuth = authPayload;
+          res.json({
+            success: true,
+            user: buildUserInfo(authPayload),
+            expiresAt: authPayload.exp ? authPayload.exp * 1000 : null,
+            mode: authMode,
+          });
+        });
+      }
+
+      if (useWebodmAuth) {
         const { username, password } = req.body || {};
         if (!username || !password) {
           return res.status(400).json({ error: "Missing username or password" });
@@ -185,7 +324,7 @@ module.exports = {
             iat: payload.iat,
           };
 
-          req.session.regenerate((regenErr) => {
+          return req.session.regenerate((regenErr) => {
             if (regenErr) {
               logger.error(`Failed to regenerate session: ${regenErr.message}`);
               return res.status(500).json({ error: "Failed to create session" });
@@ -196,6 +335,7 @@ module.exports = {
               success: true,
               user: buildUserInfo(authPayload),
               expiresAt: authPayload.exp ? authPayload.exp * 1000 : null,
+              mode: authMode,
             });
           });
         } catch (err) {
@@ -210,49 +350,14 @@ module.exports = {
           logger.error(`WebODM authentication request failed: ${err.message}`);
           return res.status(502).json({ error: "Unable to reach WebODM for authentication" });
         }
-      });
+      }
 
-      app.post("/auth/logout", requireAuth, (req, res) => {
-        destroySession(req, res, 200, { success: true });
-      });
+      return res.status(501).json({ error: "Authentication is not configured for this instance." });
+    });
 
-      app.get("/auth/session", (req, res) => {
-        const auth = req.session && req.session.webodmAuth;
-        if (!auth) {
-          return res.status(401).json({ error: "Not authenticated" });
-        }
-        if (auth.exp && auth.exp * 1000 <= Date.now()) {
-          return destroySession(req, res, 401, { error: "Session expired" });
-        }
-        res.json({
-          user: buildUserInfo(auth),
-          expiresAt: auth.exp ? auth.exp * 1000 : null,
-        });
-      });
-
-      app.get("/signout", requireAuth, (req, res) => {
-        destroySession(req, res, 200, {
-          success: true,
-          message: 'Signed out. <br /> <a href="/">Sign back in</a>',
-        });
-      });
-    } else {
-      app.post("/auth/login", (_req, res) => {
-        res.status(501).json({ error: "WebODM authentication is not configured for this instance." });
-      });
-      app.post("/auth/logout", (_req, res) => res.json({ success: true }));
-      app.get("/auth/session", (_req, res) => {
-        res.json({
-          user: {
-            username: options.password ? "admin" : "guest",
-          },
-          legacy: true,
-        });
-      });
-      app.get("/signout", (_req, res) => {
-        res.status(401).send('Signed out. <br /> <a href="/">Sign back in</a>');
-      });
-    }
+    app.get("/auth/config", (_req, res) => {
+      res.json(authConfigResponse);
+    });
 
     // API
     app.get("/r/info", ensureAuth, (req, res) => {
