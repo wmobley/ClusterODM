@@ -37,7 +37,7 @@ let argDefs = {
             'upload-max-speed', 'ssl-key', 'ssl-cert', 'secure-port',
             'public-address', 'config',
             'asr', 'registration-secret'],
-    boolean: ['splitmerge', 'debug', 'allow-local-download-bypass'],
+    boolean: ['splitmerge', 'debug', 'allow-local-download-bypass', 'force-node-downloads'],
     alias: {
         p: 'port',
         c: 'cloud-provider'

@@ -18,5 +18,6 @@
     "ssl-key": "",
     "ssl-cert": "",
     "asr": "",
-    "allow-local-download-bypass": false
+    "allow-local-download-bypass": false,
+    "force-node-downloads": false
 }
