@@ -72,6 +72,20 @@ module.exports = {
         return null;
     },
 
+    remove: async function(taskId){
+        if (!taskId) return false;
+
+        if (!routes || !routes[taskId]) return false;
+
+        delete routes[taskId];
+        try{
+            await this.saveToDisk();
+        }catch(e){
+            logger.warn(`Failed to save routes after removing ${taskId}: ${e.message}`);
+        }
+        return true;
+    },
+
     removeByNode: async function(node){
         if (!node) return;
 

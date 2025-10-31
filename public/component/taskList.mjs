@@ -1,6 +1,8 @@
 import { html } from "../lib/preact.html.mjs";
+import { useState } from "../lib/hooks.module.js";
 
 const clusterBaseUrl = window.location.origin;
+const apiPrefix = window.location.pathname.startsWith("/admin") ? "/admin" : "";
 
 const buildClusterUrl = (path, token, extraParams = {}) => {
   const params = new URLSearchParams();
@@ -79,7 +81,7 @@ const formatTimestamp = (timestamp) => {
   }
 };
 
-const renderLinks = (task) => {
+const renderLinks = (task, onDelete, deleteState = {}) => {
   const token = task.token;
   const node = task.node;
   const nodeUrl = node ? buildNodeUrl(node, node.token) : null;
@@ -90,7 +92,11 @@ const renderLinks = (task) => {
     ? buildClusterUrl(`/task/${encodeURIComponent(task.uuid)}/output`, token, { line: 0 })
     : null;
 
-  return html`<div class="d-flex flex-wrap gap-1">
+  const isDeleting = deleteState.loading;
+  const deleteError = deleteState.error;
+
+  return html`<div class="d-flex flex-column gap-2">
+    <div class="d-flex flex-wrap gap-1">
     ${nodeUrl
       ? html`<a class="btn btn-sm btn-outline-primary" href=${nodeUrl} target="_blank" rel="noopener noreferrer"
           >Node UI</a
@@ -123,6 +129,15 @@ const renderLinks = (task) => {
           >Task info</a
         >`
       : html``}
+    ${onDelete
+      ? html`<button
+          class="btn btn-sm btn-outline-danger"
+          disabled=${isDeleting}
+          onClick=${onDelete}
+        >
+          ${isDeleting ? "Deleting..." : "Delete"}
+        </button>`
+      : html``}
     ${taskOutputUrl
       ? html`<a
           class="btn btn-sm btn-outline-success"
@@ -132,12 +147,56 @@ const renderLinks = (task) => {
           >Task output</a
         >`
       : html``}
+    </div>
+    ${deleteError ? html`<div class="text-danger small">${deleteError}</div>` : html``}
   </div>`;
 };
 
-export const TaskList = ({ tasks = [] }) => {
+export const TaskList = ({ tasks = [], refreshTasks }) => {
   const hasTasks = Array.isArray(tasks) && tasks.length > 0;
   const sortedTasks = hasTasks ? [...tasks].sort((a, b) => (b.accessed || 0) - (a.accessed || 0)) : [];
+  const [deleteStates, setDeleteStates] = useState({});
+
+  const handleDelete = async (task) => {
+    if (!task || !task.uuid) return;
+    if (!window.confirm(`Delete task ${task.uuid}? This will remove it from ClusterODM.`)) return;
+
+    const uuid = task.uuid;
+    setDeleteStates((prev) => ({
+      ...prev,
+      [uuid]: { loading: true, error: null }
+    }));
+
+    try {
+      const res = await fetch(`${apiPrefix}/r/task/delete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ uuid })
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.success) {
+        const message = json?.error || `Request failed with status ${res.status}`;
+        throw new Error(message);
+      }
+
+      setDeleteStates((prev) => ({
+        ...prev,
+        [uuid]: { loading: false, error: null }
+      }));
+
+      if (typeof refreshTasks === "function") {
+        refreshTasks();
+      }
+    } catch (e) {
+      setDeleteStates((prev) => ({
+        ...prev,
+        [uuid]: { loading: false, error: e.message || "Failed to delete task" }
+      }));
+    }
+  };
 
   return html`<div class="mt-4">
     <h4>Registered Tasks</h4>
@@ -151,12 +210,14 @@ export const TaskList = ({ tasks = [] }) => {
               <th>Node</th>
               <th>Status</th>
               <th>Last Activity</th>
-              <th>Links</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             ${sortedTasks.map(
-              (task, idx) => html`<tr>
+              (task, idx) => {
+                const deleteState = deleteStates[task.uuid] || {};
+                return html`<tr>
                 <td>${idx + 1}</td>
                 <td>
                   <span class="font-monospace" title=${task.uuid}>${task.uuid}</span>
@@ -178,8 +239,9 @@ export const TaskList = ({ tasks = [] }) => {
                 </td>
                 <td>${formatStatus(task)}</td>
                 <td>${formatTimestamp(task.accessed)}</td>
-                <td>${renderLinks(task)}</td>
-              </tr>`
+                <td>${renderLinks(task, () => handleDelete(task), deleteState)}</td>
+              </tr>`;
+              }
             )}
           </tbody>
         </table>`

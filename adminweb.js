@@ -144,6 +144,87 @@ module.exports = {
       }
     });
 
+    app.post("/r/task/delete", async (req, res) => {
+      const { uuid } = req.body || {};
+
+      if (!uuid || typeof uuid !== "string") {
+        return res.status(400).json({ success: false, error: "Missing or invalid uuid" });
+      }
+
+      logger.info(`Admin requested deletion of task ${uuid}`);
+
+      const result = {
+        uuid,
+        removedFromRoute: false,
+        removedFromTaskTable: false,
+        removedFromPending: false,
+        cancelAttempt: null
+      };
+
+      try {
+        const routeEntry = await routetable.lookup(uuid);
+        if (routeEntry) {
+          const node = routeEntry.node;
+          if (node && typeof node.taskCancel === "function") {
+            try {
+              await node.taskCancel(uuid);
+              result.cancelAttempt = "success";
+            } catch (cancelErr) {
+              result.cancelAttempt = `failed: ${cancelErr.message}`;
+              logger.warn(`Failed to cancel task ${uuid} on node ${node}: ${cancelErr.message}`);
+            }
+          }
+
+          result.removedFromRoute = await routetable.remove(uuid);
+        }
+
+        const tableEntry = await tasktable.lookup(uuid);
+        if (tableEntry) {
+          await tasktable.delete(uuid);
+          result.removedFromTaskTable = true;
+        }
+
+        const provider = asrProvider.get();
+        if (provider && provider.pendingTasks) {
+          const fs = require("fs");
+          const utils = require("./libs/utils");
+          for (const [jobUuid, pending] of provider.pendingTasks.entries()) {
+            if (pending && (pending.clusterTaskId === uuid || pending.taskId === uuid)) {
+              if (pending.tmpPath) {
+                try {
+                  const lockFile = pending.tmpPath + "/.tapis_pending_task";
+                  if (fs.existsSync(lockFile)) {
+                    fs.unlinkSync(lockFile);
+                  }
+                  utils.rmdir(pending.tmpPath);
+                } catch (cleanupErr) {
+                  logger.warn(`Failed to cleanup tmp path for pending task ${uuid}: ${cleanupErr.message}`);
+                }
+              }
+
+              provider.pendingTasks.delete(jobUuid);
+              result.removedFromPending = true;
+            }
+          }
+        }
+
+        if (!result.removedFromRoute && !result.removedFromTaskTable && !result.removedFromPending) {
+          return res.status(404).json({
+            success: false,
+            error: `Task ${uuid} not found in routing table, task table, or pending queues`
+          });
+        }
+
+        res.json({
+          success: true,
+          ...result
+        });
+      } catch (e) {
+        logger.error(`Failed to delete hung task ${uuid}: ${e.message}`);
+        res.status(500).json({ success: false, error: e.message });
+      }
+    });
+
     app.delete("/r/node", async (req, res) => {
       const { number } = req.body;
       if (number) {

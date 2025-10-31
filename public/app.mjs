@@ -100,7 +100,7 @@ export default function App() {
   return html` <div class="container">
     <${Header} info=${info} />
     <${NodeList} nodes=${nodes} getData=${getNodes} refreshTasks=${getTasks} />
-    <${TaskList} tasks=${tasks} />
+    <${TaskList} tasks=${tasks} refreshTasks=${getTasks} />
 
     <div id="btn-area">
       <${AddInstanceButton} getNodes=${getNodes} />
