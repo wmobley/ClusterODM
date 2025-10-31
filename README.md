@@ -132,7 +132,7 @@ The `tapis-config.json` file controls HPC resource allocation:
   "imageSizeMapping": [
     {
       "maxImages": 50,
-      "nodeCount": 1,
+      "jobCount": 1,
       "coresPerNode": 16,
       "memoryMB": 30720,
       "maxJobTime": "02:00:00"
@@ -146,7 +146,7 @@ The `tapis-config.json` file controls HPC resource allocation:
 
 - **Automatic Split-Merge**: Datasets ≥50 images automatically enable distributed processing
 - **Smart Overlap**: 150m photogrammetric overlap between submodels
-- **Resource Scaling**: 1-6 parallel VMs based on dataset size
+- **Resource Scaling**: 1-6 parallel job submissions based on dataset size
 - **Failure Recovery**: Automatic node cleanup after connection failures
 - **Progress Monitoring**: Real-time job status via Tapis API
 

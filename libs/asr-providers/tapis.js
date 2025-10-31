@@ -49,9 +49,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             "jobLimit": -1,
             "createRetries": 3,
             "imageSizeMapping": [
-                {"maxImages": 50, "nodeCount": 1, "coresPerNode": 2, "memoryMB": 8192, "maxJobTime": "02:00:00"},
-                {"maxImages": 200, "nodeCount": 1, "coresPerNode": 4, "memoryMB": 16384, "maxJobTime": "04:00:00"},
-                {"maxImages": 500, "nodeCount": 1, "coresPerNode": 8, "memoryMB": 32768, "maxJobTime": "08:00:00"}
+                {"maxImages": 50, "jobCount": 1, "coresPerNode": 2, "memoryMB": 8192, "maxJobTime": "02:00:00"},
+                {"maxImages": 200, "jobCount": 1, "coresPerNode": 4, "memoryMB": 16384, "maxJobTime": "04:00:00"},
+                {"maxImages": 500, "jobCount": 1, "coresPerNode": 8, "memoryMB": 32768, "maxJobTime": "08:00:00"}
             ]
         }, userConfig);
 
@@ -143,17 +143,14 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     calculateNodeSubmissionPlan(imagesCount){
         const jobProps = this.getJobPropertiesFor(imagesCount) || {};
         const defaultNodeCount = this.getConfig("job.nodeCount", 1);
-        const requestedNodeCount = Math.max(1, jobProps.nodeCount || defaultNodeCount || 1);
+        const computeNodeCountRaw = jobProps.computeNodeCount ?? jobProps.nodeCount;
+        const requestedNodeCount = Math.max(1, computeNodeCountRaw ?? defaultNodeCount ?? 1);
 
-        // Historically the nodeCount setting was repurposed to spin up multiple
-        // independent NodeODM jobs for a single task. For Tapis-backed nodes that
-        // behavior is undesirable because each submission already provisions a
-        // full processing environment. Instead, always submit a single Tapis job
-        // per task and treat nodeCount purely as a sizing hint for the job itself.
         const maxNodesPerJobRaw = this.getConfig("job.maxNodesPerJob", 1);
         const maxNodesPerJob = Math.max(1, parseInt(maxNodesPerJobRaw, 10) || 1);
         const nodesForJob = Math.max(1, Math.min(requestedNodeCount, maxNodesPerJob));
-        const nodesToSubmit = 1;
+        const jobCountRaw = jobProps.jobCount ?? 1;
+        const nodesToSubmit = Math.max(1, parseInt(jobCountRaw, 10) || 1);
 
         return {
             jobProps,
@@ -421,9 +418,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             logger.warn(`[TAPIS DEBUG] Requested ${requestedNodeCount} compute node(s) but configuration limits to ${maxNodesPerJob}; job will reserve ${nodesForJob}`);
         }
 
-        if (nodesToSubmit !== 1) {
-            logger.warn(`[TAPIS DEBUG] Multiple job submissions are disabled for Tapis integration; forcing single submission (requested ${nodesToSubmit}).`);
-        }
+        logger.info(`[TAPIS DEBUG] Submission plan: jobCount=${nodesToSubmit}, nodesPerJob=${nodesForJob}, requestedNodeCount=${requestedNodeCount}, maxNodesPerJob=${maxNodesPerJob}`);
 
         const submittedJobs = [];
 

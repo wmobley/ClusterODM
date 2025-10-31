@@ -143,7 +143,7 @@ For Tapis integration, create a `tapis-config.json` file:
   "imageSizeMapping": [
     {
       "maxImages": 50,
-      "nodeCount": 1,
+      "jobCount": 1,
       "coresPerNode": 2,
       "memoryMB": 8192,
       "maxJobTime": "02:00:00"

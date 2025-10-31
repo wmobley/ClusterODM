@@ -57,13 +57,15 @@ The `imageSizeMapping` array defines resource allocation based on the number of 
 "imageSizeMapping": [
     {
         "maxImages": 50,
-        "nodeCount": 1,
+        "jobCount": 1,
         "coresPerNode": 2,
         "memoryMB": 8192,
         "maxJobTime": "02:00:00"
     }
 ]
 ```
+
+- `jobCount` controls how many Tapis jobs are submitted in parallel for datasets up to `maxImages`. Each job uses the global `job.nodeCount` (or an optional `computeNodeCount` override) to size the Tapis allocation.
 
 ## Usage
 
