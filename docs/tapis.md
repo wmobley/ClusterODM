@@ -66,6 +66,7 @@ The `imageSizeMapping` array defines resource allocation based on the number of 
 ```
 
 - `jobCount` controls how many Tapis jobs are submitted in parallel for datasets up to `maxImages`. Each job uses the global `job.nodeCount` (or an optional `computeNodeCount` override) to size the Tapis allocation.
+- When split-merge processing is enabled (default), ClusterODM automatically sets the ODM `--split` option so that each Tapis job handles roughly `images / jobCount` images, ensuring submodels are distributed across the available nodes.
 
 ## Usage
 

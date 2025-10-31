@@ -475,12 +475,35 @@ module.exports = {
                 logger.info(`[SPLIT-MERGE] Auto-enabling split for large dataset (${imagesCount} images)`);
                 foundSplit = true;
 
-                // Set split value based on dataset size for optimal performance
-                let splitValue = '1'; // Default: let ODM decide
-                if (imagesCount >= 500) splitValue = '200';      // Large datasets: ~200 images per submodel
-                else if (imagesCount >= 200) splitValue = '150'; // Medium datasets: ~150 images per submodel
-                else splitValue = '100';                         // Smaller datasets: ~100 images per submodel
+                // Determine desired split size using ASR submission plan when available
+                let desiredSubmodels = null;
+                const asr = asrProvider.get();
+                if (asr && typeof asr.calculateNodeSubmissionPlan === 'function') {
+                    try {
+                        const plan = asr.calculateNodeSubmissionPlan(imagesCount);
+                        if (plan && plan.nodesToSubmit && plan.nodesToSubmit > 1) {
+                            desiredSubmodels = plan.nodesToSubmit;
+                            logger.info(`[SPLIT-MERGE] Using ASR submission plan nodesToSubmit=${desiredSubmodels}`);
+                        }
+                    } catch (e) {
+                        logger.warn(`[SPLIT-MERGE] Failed to inspect ASR submission plan: ${e.message}`);
+                    }
+                }
 
+                // Fallback heuristic ensures at least two submodels
+                let splitNumeric;
+                if (desiredSubmodels && desiredSubmodels > 1) {
+                    splitNumeric = Math.ceil(imagesCount / desiredSubmodels);
+                } else {
+                    splitNumeric = Math.ceil(imagesCount / 2);
+                }
+
+                const MIN_SPLIT_SIZE = 30;
+                splitNumeric = Math.max(MIN_SPLIT_SIZE, splitNumeric);
+                splitNumeric = Math.min(splitNumeric, Math.max(imagesCount - 1, MIN_SPLIT_SIZE));
+
+                const splitValue = splitNumeric.toString();
+                logger.info(`[SPLIT-MERGE] Setting split value=${splitValue} (images=${imagesCount}, desiredSubmodels=${desiredSubmodels || 'fallback'})`);
                 odmOptions.push({name: 'split', value: splitValue});
 
                 // Add split-overlap for photogrammetric accuracy
