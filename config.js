@@ -35,9 +35,9 @@ let argDefs = {
     string: ['port', 'admin-cli-port', 'admin-pass', 'admin-web-port',
             'cloud-provider', 'downloads-from-s3', 'token', 'log-level',
             'upload-max-speed', 'ssl-key', 'ssl-cert', 'secure-port',
-            'public-address', 'config',
-            'asr', 'registration-secret'],
-    boolean: ['splitmerge', 'debug', 'allow-local-download-bypass', 'force-node-downloads'],
+            'public-address', 'config', 'admin-session-secret',
+            'asr', 'registration-secret', 'webodm-base-url'],
+    boolean: ['splitmerge', 'debug', 'allow-local-download-bypass', 'force-node-downloads', 'webodm-require-staff'],
     alias: {
         p: 'port',
         c: 'cloud-provider'
@@ -45,7 +45,7 @@ let argDefs = {
     default: defaultConfig,
 
     int: ['port', 'admin-cli-port', 'admin-web-port', 
-          'secure-port', 'upload-max-speed', 'flood-limit', 'stale-uploads-timeout'] // for cast only, not used by minimist
+          'secure-port', 'upload-max-speed', 'flood-limit', 'stale-uploads-timeout', 'webodm-timeout-ms'] // for cast only, not used by minimist
 };
 let argv = require('minimist')(process.argv.slice(2), argDefs);
 
@@ -74,6 +74,10 @@ Options:
     --ssl-cert <file>	Path to SSL .pem certificate
     --asr <file>	Path to configuration for enabling the autoscaler. This is combined with the provider's default configuration (default: none)
     --registration-secret <string>	Shared secret for automatic node registration via webhook (default: none)
+    --admin-session-secret <string> Secret used to sign admin session cookies (default: random per start)
+    --webodm-base-url <url> Base URL for WebODM when leveraging its authentication (default: ${defaultConfig.webodm?.baseUrl || 'http://localhost:8000'})
+    --webodm-require-staff Require the WebODM user to have staff permissions to gain access (default: ${defaultConfig.webodm?.requireStaff !== false})
+    --webodm-timeout-ms <number> Timeout in milliseconds for WebODM authentication requests (default: ${defaultConfig.webodm?.timeoutMs || 10000})
 
 Log Levels: 
 error | debug | info | verbose | debug | silly 
@@ -114,6 +118,22 @@ for (let k in argv){
     if (argDefs.boolean.indexOf(k) !== -1) cast = Boolean;
     config[ck] = readConfig(k, cast);
 }
+
+const mergeWebodmConfig = () => {
+    const defaults = defaultConfig.webodm || {};
+    const overrides = userConfig.webodm || {};
+    const merged = Object.assign({}, defaults, overrides);
+    if (argv['webodm-base-url']) merged.baseUrl = argv['webodm-base-url'];
+    if (argv['webodm-require-staff'] !== undefined){
+        merged.requireStaff = Boolean(argv['webodm-require-staff']);
+    }
+    if (argv['webodm-timeout-ms']){
+        merged.timeoutMs = parseInt(argv['webodm-timeout-ms'], 10);
+    }
+    return merged;
+};
+
+config.webodm = mergeWebodmConfig();
 
 config.use_ssl = config.ssl_key && config.ssl_cert;
 module.exports = config;

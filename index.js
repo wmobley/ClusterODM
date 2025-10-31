@@ -30,7 +30,13 @@ const routetable = require('./libs/routetable');
     logger.info(package_info.name + " " + package_info.version + " started with PID " + process.pid);
     logger.debug("Debug messages are ON");
     if (config.admin_cli_port !== 0) admincli.create({port: config.admin_cli_port, password: config.admin_pass});
-    if (config.admin_web_port !== 0) adminweb.create({port: config.admin_web_port, password: config.admin_pass});
+    if (config.admin_web_port !== 0) adminweb.create({
+        port: config.admin_web_port,
+        password: config.admin_pass,
+        webodm: config.webodm,
+        sessionSecret: config.admin_session_secret,
+        useSecureCookies: !!config.use_ssl
+    });
     const cloudProvider = (require('./libs/cloudProvider')).initialize(config.cloud_provider);
     await (require('./libs/asrProvider')).initialize(config.asr);
     await nodes.initialize();

@@ -4,6 +4,7 @@
     "admin-cli-port": 8080,
     "admin-web-port": 10000,
     "admin-pass": "",
+    "admin-session-secret": "change-me",
     "cloud-provider": "local",
     "downloads-from-s3": "",
     "splitmerge": true,
@@ -19,5 +20,10 @@
     "ssl-cert": "",
     "asr": "",
     "allow-local-download-bypass": false,
-    "force-node-downloads": false
+    "force-node-downloads": false,
+    "webodm": {
+        "baseUrl": "http://localhost:8000",
+        "requireStaff": true,
+        "timeoutMs": 10000
+    }
 }

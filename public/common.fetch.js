@@ -9,7 +9,7 @@ export const postFetch = async (url, { body }) => {
   return await fetch(withBase(url), {
     method: "post",
     cache: "no-cache",
-    credentials: "same-origin",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -19,9 +19,9 @@ export const postFetch = async (url, { body }) => {
 
 export const patchFetch = async (url, { body }) => {
   return await fetch(withBase(url), {
-    method: "get",
+    method: "patch",
     cache: "no-cache",
-    credentials: "same-origin",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -33,7 +33,7 @@ export const deleteFetch = async (url, { body }) => {
   return await fetch(withBase(url), {
     method: "delete",
     cache: "no-cache",
-    credentials: "same-origin",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },

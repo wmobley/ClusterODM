@@ -1,10 +1,18 @@
 import { html } from "../lib/preact.html.mjs";
 
-export const RefreshButton = ({ autoRefresh, setAutoRefresh }) =>
-  autoRefresh.isAutoRefresh
-    ? html`<button classList="btn btn-danger" onClick=${() => setAutoRefresh({ ...autoRefresh, isAutoRefresh: false })}>
+export const RefreshButton = ({ enabled = false, onChange = () => {}, disabled = false }) =>
+  enabled
+    ? html`<button
+        class="btn btn-danger"
+        disabled=${disabled}
+        onClick=${() => onChange(false)}
+      >
         Disable Auto Refresh
       </button>`
-    : html`<button classList="btn btn-success" onClick=${() => setAutoRefresh({ ...autoRefresh, isAutoRefresh: true })}>
+    : html`<button
+        class="btn btn-success"
+        disabled=${disabled}
+        onClick=${() => onChange(true)}
+      >
         Enable Auto Refresh
       </button>`;

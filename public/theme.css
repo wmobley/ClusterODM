@@ -17,3 +17,24 @@
 #btn-area {
   display: flex;
 }
+
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background-color: #f5f7fb;
+}
+
+.login-card {
+  max-width: 360px;
+  width: 100%;
+}
+
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

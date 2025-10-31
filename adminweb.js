@@ -18,6 +18,9 @@
 const logger = require("./libs/logger");
 const express = require("express");
 const basicAuth = require("express-basic-auth");
+const session = require("express-session");
+const axios = require("axios");
+const crypto = require("crypto");
 const nodes = require("./libs/nodes");
 const package_info = require("./package_info");
 const cors = require("cors");
@@ -30,17 +33,42 @@ module.exports = {
   create: function (options) {
     logger.info("Starting admin web interface on " + options.port);
 
+    const useWebodmAuth = options.webodm && options.webodm.baseUrl;
+    const webodmConfig = options.webodm || {};
+    const webodmBaseUrl = webodmConfig.baseUrl;
+    const webodmTimeout = webodmConfig.timeoutMs || 10000;
+    const webodmRequireStaff = webodmConfig.requireStaff !== false;
+
+    if (useWebodmAuth) {
+      logger.info(`Admin interface using WebODM authentication at ${webodmBaseUrl}`);
+    } else if (options.password) {
+      logger.warn("WebODM authentication not configured; falling back to static admin password");
+    } else {
+      logger.warn(`No WebODM authentication or admin password specified, admin interface is unsecured`);
+    }
+
     const app = express();
-    app.use(express.json());
     app.use(cors());
 
-    app.get("/signout", (req, res) => {
-      res.status(401).send('Signed out. <br /> <a href="/">Sign back in</a>');
-    });
+    if (useWebodmAuth) {
+      const sessionSecret =
+        (options.sessionSecret && typeof options.sessionSecret === "string" && options.sessionSecret.trim().length > 0)
+          ? options.sessionSecret
+          : crypto.randomBytes(32).toString("hex");
 
-    if (!options.password) {
-      logger.warn(`No admin password specified, make sure port ${options.port} is secured`);
-    } else {
+      app.use(
+        session({
+          secret: sessionSecret,
+          resave: false,
+          saveUninitialized: false,
+          cookie: {
+            httpOnly: true,
+            sameSite: "lax",
+            secure: !!options.useSecureCookies,
+          },
+        })
+      );
+    } else if (options.password) {
       app.use(
         basicAuth({
           users: { admin: options.password },
@@ -50,21 +78,194 @@ module.exports = {
       );
     }
 
-    app.use(express.static("public"));
     app.use(express.json());
+    app.use(express.static("public"));
+
+    const ensureAuthFallback = (_req, _res, next) => next();
+    let ensureAuth = ensureAuthFallback;
+
+    if (useWebodmAuth) {
+      const loginUrl = new URL("/api/token-auth/", webodmBaseUrl).toString();
+      const adminUsersUrl = new URL("/api/admin/users/", webodmBaseUrl).toString();
+
+      const decodeJwtPayload = (token) => {
+        try {
+          const parts = token.split(".");
+          if (parts.length < 2) return null;
+          const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+          const padded = base64.padEnd(base64.length + (4 - (base64.length % 4 || 4)) % 4, "=");
+          const json = Buffer.from(padded, "base64").toString("utf8");
+          return JSON.parse(json);
+        } catch (err) {
+          logger.warn(`Failed to decode WebODM JWT payload: ${err.message}`);
+          return null;
+        }
+      };
+
+      const buildUserInfo = (auth) => ({
+        username: auth.username,
+        userId: auth.userId,
+        email: auth.email || null,
+      });
+
+      const destroySession = (req, res, status, payload) => {
+        if (!req.session) {
+          res.clearCookie("connect.sid");
+          return res.status(status).json(payload);
+        }
+        req.session.destroy((err) => {
+          if (err) {
+            logger.warn(`Failed to destroy session: ${err.message}`);
+          }
+          res.clearCookie("connect.sid");
+          res.status(status).json(payload);
+        });
+      };
+
+      const requireAuth = (req, res, next) => {
+        const auth = req.session && req.session.webodmAuth;
+        if (!auth) {
+          return res.status(401).json({ error: "Not authenticated" });
+        }
+        if (auth.exp && auth.exp * 1000 <= Date.now()) {
+          logger.info(`Session expired for user ${auth.username || auth.userId || "unknown"}`);
+          return destroySession(req, res, 401, { error: "Session expired" });
+        }
+        req.webodmAuth = auth;
+        next();
+      };
+
+      ensureAuth = requireAuth;
+
+      app.post("/auth/login", async (req, res) => {
+        if (!useWebodmAuth) {
+          return res.status(501).json({ error: "WebODM authentication not configured" });
+        }
+
+        const { username, password } = req.body || {};
+        if (!username || !password) {
+          return res.status(400).json({ error: "Missing username or password" });
+        }
+
+        try {
+          const response = await axios.post(
+            loginUrl,
+            { username, password },
+            { timeout: webodmTimeout }
+          );
+
+          const token = response && response.data && response.data.token;
+          if (!token) {
+            return res.status(401).json({ error: "Invalid credentials" });
+          }
+
+          if (webodmRequireStaff) {
+            try {
+              await axios.get(adminUsersUrl, {
+                timeout: webodmTimeout,
+                headers: { Authorization: `JWT ${token}` },
+                params: { limit: 1 },
+              });
+            } catch (err) {
+              if (err.response && err.response.status === 403) {
+                return res.status(403).json({ error: "Insufficient permissions" });
+              }
+              logger.error(`Failed to verify admin privileges: ${err.message}`);
+              return res.status(502).json({ error: "Failed to verify permissions with WebODM" });
+            }
+          }
+
+          const payload = decodeJwtPayload(token) || {};
+          const authPayload = {
+            token,
+            username: payload.username || username,
+            userId: payload.user_id,
+            email: payload.email,
+            exp: payload.exp,
+            iat: payload.iat,
+          };
+
+          req.session.regenerate((regenErr) => {
+            if (regenErr) {
+              logger.error(`Failed to regenerate session: ${regenErr.message}`);
+              return res.status(500).json({ error: "Failed to create session" });
+            }
+
+            req.session.webodmAuth = authPayload;
+            res.json({
+              success: true,
+              user: buildUserInfo(authPayload),
+              expiresAt: authPayload.exp ? authPayload.exp * 1000 : null,
+            });
+          });
+        } catch (err) {
+          if (err.response) {
+            const status = err.response.status;
+            if (status === 400 || status === 401) {
+              return res.status(401).json({ error: "Invalid credentials" });
+            }
+            logger.error(`WebODM authentication error (${status}): ${err.response.data}`);
+            return res.status(502).json({ error: "Failed to authenticate with WebODM" });
+          }
+          logger.error(`WebODM authentication request failed: ${err.message}`);
+          return res.status(502).json({ error: "Unable to reach WebODM for authentication" });
+        }
+      });
+
+      app.post("/auth/logout", requireAuth, (req, res) => {
+        destroySession(req, res, 200, { success: true });
+      });
+
+      app.get("/auth/session", (req, res) => {
+        const auth = req.session && req.session.webodmAuth;
+        if (!auth) {
+          return res.status(401).json({ error: "Not authenticated" });
+        }
+        if (auth.exp && auth.exp * 1000 <= Date.now()) {
+          return destroySession(req, res, 401, { error: "Session expired" });
+        }
+        res.json({
+          user: buildUserInfo(auth),
+          expiresAt: auth.exp ? auth.exp * 1000 : null,
+        });
+      });
+
+      app.get("/signout", requireAuth, (req, res) => {
+        destroySession(req, res, 200, {
+          success: true,
+          message: 'Signed out. <br /> <a href="/">Sign back in</a>',
+        });
+      });
+    } else {
+      app.post("/auth/login", (_req, res) => {
+        res.status(501).json({ error: "WebODM authentication is not configured for this instance." });
+      });
+      app.post("/auth/logout", (_req, res) => res.json({ success: true }));
+      app.get("/auth/session", (_req, res) => {
+        res.json({
+          user: {
+            username: options.password ? "admin" : "guest",
+          },
+          legacy: true,
+        });
+      });
+      app.get("/signout", (_req, res) => {
+        res.status(401).send('Signed out. <br /> <a href="/">Sign back in</a>');
+      });
+    }
 
     // API
-    app.get("/r/info", (req, res) => {
+    app.get("/r/info", ensureAuth, (req, res) => {
       const { name, version } = package_info;
       res.json({ name, version });
     });
 
-    app.get("/r/node/list", (req, res) => {
+    app.get("/r/node/list", ensureAuth, (req, res) => {
       const list = nodes.all();
       res.json(list.map((node) => nodeToJson(node)));
     });
 
-    app.get("/r/task/list", async (req, res) => {
+    app.get("/r/task/list", ensureAuth, async (req, res) => {
       const includeDetails = req.query.details === "true";
 
       try {
@@ -144,7 +345,7 @@ module.exports = {
       }
     });
 
-    app.post("/r/task/delete", async (req, res) => {
+    app.post("/r/task/delete", ensureAuth, async (req, res) => {
       const { uuid } = req.body || {};
 
       if (!uuid || typeof uuid !== "string") {
@@ -225,7 +426,7 @@ module.exports = {
       }
     });
 
-    app.delete("/r/node", async (req, res) => {
+    app.delete("/r/node", ensureAuth, async (req, res) => {
       const { number } = req.body;
       if (number) {
         const isSuccess = await netutils.removeAndCleanupNode(nodes.nth(number), asrProvider.get());
@@ -235,7 +436,7 @@ module.exports = {
       }
     });
 
-    app.post("/r/node/unlock", (req, res) => {
+    app.post("/r/node/unlock", ensureAuth, (req, res) => {
       const { number } = req.body;
       if (number) {
         const isSuccess = nodes.unlock(nodes.nth(number));
@@ -245,7 +446,7 @@ module.exports = {
       }
     });
 
-    app.post("/r/node/lock", (req, res) => {
+    app.post("/r/node/lock", ensureAuth, (req, res) => {
       const { number } = req.body;
       if (number) {
         const isSuccess = nodes.lock(nodes.nth(number));
@@ -255,7 +456,7 @@ module.exports = {
       }
     });
 
-    app.post("/r/node/add", (req, res) => {
+    app.post("/r/node/add", ensureAuth, (req, res) => {
       const { hostname, port, token } = req.body;
       const node = nodes.addUnique(hostname, port, token);
 
