@@ -78,6 +78,23 @@ module.exports = {
             return addr;
         };
 
+        const isPrivateIPv4 = (ip) => {
+            if (!ip) return false;
+            const parts = ip.split('.').map(Number);
+            if (parts.length !== 4 || parts.some(n => Number.isNaN(n))) return false;
+            if (parts[0] === 10) return true;
+            if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+            if (parts[0] === 192 && parts[1] === 168) return true;
+            if (parts[0] === 169 && parts[1] === 254) return true;
+            return false;
+        };
+
+        const isPrivateIPv6 = (ip) => {
+            if (!ip) return false;
+            if (ip === '::1') return true;
+            return ip.startsWith('fc') || ip.startsWith('fd');
+        };
+
         const isInternalRequest = (remoteAddress, localAddress) => {
             const remote = normalizeAddress(remoteAddress);
             const local = normalizeAddress(localAddress);
@@ -85,6 +102,7 @@ module.exports = {
             if (!remote) return false;
             if (remote === '127.0.0.1' || remote === '::1') return true;
             if (local && remote === local) return true;
+            if (isPrivateIPv4(remote) || isPrivateIPv6(remote)) return true;
 
             return false;
         };
@@ -483,8 +501,10 @@ module.exports = {
                 let authOptional = publicApiPaths.has(pathname);
 
                 const connection = req.socket || req.connection;
-                const remoteAddress = connection && connection.remoteAddress;
-                const localAddress = connection && connection.localAddress;
+                const rawRemoteAddress = connection && connection.remoteAddress;
+                const rawLocalAddress = connection && connection.localAddress;
+                const remoteAddress = normalizeAddress(rawRemoteAddress);
+                const localAddress = normalizeAddress(rawLocalAddress);
                 const isDownloadRequest = pathname.startsWith('/task/') && pathname.indexOf('/download/') !== -1;
 
                 if (!authOptional &&
@@ -492,7 +512,11 @@ module.exports = {
                     isDownloadRequest &&
                     isInternalRequest(remoteAddress, localAddress)){
                     authOptional = true;
-                    logger.debug(`[TAPIS DEBUG] Allowing JWT bypass for internal download ${pathname} from ${remoteAddress}`);
+                    logger.debug(`[TAPIS DEBUG] Allowing JWT bypass for internal download ${pathname} from ${remoteAddress || 'unknown'}`);
+                }
+
+                if (isDownloadRequest){
+                    logger.info(`[TAPIS DEBUG] Download request ${pathname} from=${remoteAddress || 'unknown'} local=${localAddress || 'unknown'} token_present=${query.token ? 'yes' : 'no'} bypass=${authOptional}`);
                 }
 
                 // Extract token from Authorization header if not in query params
