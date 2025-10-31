@@ -353,7 +353,8 @@ module.exports = {
                   const path = require('path');
                   const axios = require('axios');
 
-                  const { taskOptions, fileNames, tmpPath } = tapisNode.pendingTaskData;
+                  const { taskOptions, fileNames, tmpPath, token: pendingToken } = tapisNode.pendingTaskData;
+                  const clusterTaskUuid = tapisNode.pendingTaskData.clusterTaskId || tapisNode.pendingTaskData.taskId || null;
 
                   const form = new FormData();
                   form.append('name', `tapis_job_${tapisNode.jobId}`);
@@ -380,7 +381,8 @@ module.exports = {
 
                   const response = await axios.post(`${nodeUrl}/task/new${tokenParam}`, form, {
                     headers: {
-                      ...form.getHeaders()
+                      ...form.getHeaders(),
+                      ...(clusterTaskUuid ? { 'set-uuid': clusterTaskUuid } : {})
                     },
                     timeout: 300000,
                     maxBodyLength: Infinity,
@@ -390,13 +392,25 @@ module.exports = {
                   logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
 
                   const taskUuid = response.data?.uuid;
-                  if (!taskUuid) {
+                  if (clusterTaskUuid && taskUuid && taskUuid !== clusterTaskUuid) {
+                    logger.warn(`[TAPIS DEBUG] NodeODM returned mismatched UUID ${taskUuid} (expected ${clusterTaskUuid})`);
+                  }
+
+                  const effectiveUuid = clusterTaskUuid || taskUuid;
+                  if (!effectiveUuid) {
                     logger.error(`[TAPIS DEBUG] No task UUID in response. Response structure:`, JSON.stringify(response.data, null, 2));
                     throw new Error('NodeODM response missing task UUID');
                   }
 
-                  tapisNode.currentTask = taskUuid;
-                  logger.info(`[TAPIS DEBUG] Successfully created task ${taskUuid} on registered NodeODM`);
+                  tapisNode.currentTask = effectiveUuid;
+                  logger.info(`[TAPIS DEBUG] Successfully created task ${effectiveUuid} on registered NodeODM`);
+
+                  if (pendingToken) {
+                    await routetable.add(effectiveUuid, tapisNode, pendingToken);
+                    await tasktable.delete(effectiveUuid);
+                  } else {
+                    logger.warn(`[TAPIS DEBUG] Pending task token missing for ${effectiveUuid}; skipping route table update`);
+                  }
 
                   // Clean up pending data and tmp files
                   tapisNode.pendingTaskData = null;
@@ -537,11 +551,14 @@ module.exports = {
                   const nodeUrl = `http://${hostname}:${port}`;
                   const tokenParam = token ? `?token=${token}` : '';
 
-                  logger.info(`[TAPIS DEBUG] Submitting task to registered NodeODM ${nodeUrl}/task/new`);
+                  const clusterTaskUuid = pendingTask.clusterTaskId || pendingTask.taskId || null;
+
+                  logger.info(`[TAPIS DEBUG] Submitting task to registered NodeODM ${nodeUrl}/task/new (cluster task UUID: ${clusterTaskUuid || 'auto'})`);
 
                   const response = await axios.post(`${nodeUrl}/task/new${tokenParam}`, form, {
                     headers: {
-                      ...form.getHeaders()
+                      ...form.getHeaders(),
+                      ...(clusterTaskUuid ? { 'set-uuid': clusterTaskUuid } : {})
                     },
                     timeout: 300000,
                     maxBodyLength: Infinity,
@@ -551,12 +568,28 @@ module.exports = {
                   logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
 
                   const taskUuid = response.data?.uuid;
-                  if (!taskUuid) {
+                  if (clusterTaskUuid && taskUuid && taskUuid !== clusterTaskUuid) {
+                    logger.warn(`[TAPIS DEBUG] NodeODM returned mismatched UUID ${taskUuid} (expected ${clusterTaskUuid})`);
+                  }
+
+                  const effectiveUuid = clusterTaskUuid || taskUuid;
+                  if (!effectiveUuid) {
                     logger.error(`[TAPIS DEBUG] No task UUID in response. Response structure:`, JSON.stringify(response.data, null, 2));
                     throw new Error('NodeODM response missing task UUID');
                   }
 
-                  logger.info(`[TAPIS DEBUG] Successfully created task ${taskUuid} on NodeODM for Tapis job ${tapisJobUuid}`);
+                  logger.info(`[TAPIS DEBUG] Successfully created task ${effectiveUuid} on NodeODM for Tapis job ${tapisJobUuid}`);
+
+                  if (pendingTask.token) {
+                    try {
+                      await routetable.add(effectiveUuid, node, pendingTask.token);
+                      await tasktable.delete(effectiveUuid);
+                    } catch (routeErr) {
+                      logger.warn(`[TAPIS DEBUG] Failed to update tables for task ${effectiveUuid}: ${routeErr.message}`);
+                    }
+                  } else {
+                    logger.warn(`[TAPIS DEBUG] Pending task ${tapisJobUuid} missing token; skipping route table update`);
+                  }
 
                   // Clean up tmp directory and protection lock
                   if (pendingTask.tmpPath) {

@@ -600,7 +600,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     pendingTasks = new Map();
 
     // Override createNode to just submit Tapis job and wait for NodeODM registration
-    async createNode(req, imagesCount, token, hostname, status, taskOptions, fileNames, tmpPath){
+    async createNode(req, imagesCount, token, hostname, status, taskOptions, fileNames, tmpPath, clusterTaskId = null){
         logger.info(`[TAPIS DEBUG] createNode called with imagesCount: ${imagesCount}, hostname: ${hostname}`);
 
         if (!this.canHandle(imagesCount)) {
@@ -667,7 +667,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             }
 
             // Store pending task data for when NodeODM registers (keep files local)
-            const taskId = require('crypto').randomUUID();
+            const clusterTaskUuid = clusterTaskId || require('crypto').randomUUID();
 
             // Mark tmp directory as protected from cleanup (if tmpPath exists)
             if (tmpPath) {
@@ -676,7 +676,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 try {
                     fs.writeFileSync(lockFile, JSON.stringify({
                         tapisJobId,
-                        taskId,
+                        taskId: clusterTaskUuid,
+                        clusterTaskId: clusterTaskUuid,
                         timestamp: Date.now(),
                         protected: true
                     }));
@@ -687,7 +688,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             }
 
             this.pendingTasks.set(tapisJobId, {
-                taskId,
+                taskId: clusterTaskUuid,
+                clusterTaskId: clusterTaskUuid,
                 jobId,
                 imagesCount,
                 taskOptions,
@@ -700,7 +702,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 submittedJobs: submissionResult.submittedJobs
             });
 
-            logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${taskId} pending NodeODM registration (files kept local)`);
+            logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${clusterTaskUuid} pending NodeODM registration (files kept local)`);
             if (submissionResult.submittedJobs && submissionResult.submittedJobs.length > 1) {
                 const additionalJobs = submissionResult.submittedJobs.slice(1).map(job => job.tapisJobId).join(', ');
                 logger.info(`[TAPIS DEBUG] Additional Tapis jobs submitted for capacity: ${additionalJobs}`);
