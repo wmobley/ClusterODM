@@ -958,8 +958,26 @@ module.exports = {
                         // the URL to fetch from S3.
                         const downloadsPath = asrProvider.downloadsPath();
                         const forceNodeDownloads = !!config.force_node_downloads;
+                        const node = await routetable.lookupNode(taskId);
+                        const isDownloadAction = action && action.indexOf('download') === 0;
+                        const isTapisNode = node && node.constructor && node.constructor.name === 'TapisNode';
+                        const tapisNodeHasRegisteredTarget = isTapisNode && node.nodeRegistered && node.hostname && node.port;
+                        const nodeProxyTarget = node && typeof node.proxyTargetUrl === 'function' ? node.proxyTargetUrl() : null;
+                        const nodeOnline = node && typeof node.isOnline === 'function' ? node.isOnline() : false;
+                        const nodeCanServeDownload = isDownloadAction && node && nodeProxyTarget && nodeOnline && (!isTapisNode || tapisNodeHasRegisteredTarget);
+                        const asrInstance = asrProvider.get();
+                        const asrDriver = asrInstance && typeof asrInstance.getDriverName === 'function' ? asrInstance.getDriverName() : null;
+                        const downloadsPathEnabled = !forceNodeDownloads && downloadsPath && asrDriver !== 'tapis';
 
-                        if (!forceNodeDownloads && downloadsPath && action.indexOf('download') === 0){
+                        if (isDownloadAction){
+                            logger.info(`[TAPIS DEBUG] Download routing decision task=${taskId} node=${node ? node.constructor.name : 'none'} online=${nodeOnline} registered=${tapisNodeHasRegisteredTarget} canServe=${nodeCanServeDownload} downloadsPathEnabled=${downloadsPathEnabled}`);
+                        }
+
+                        if (isDownloadAction && !downloadsPathEnabled && downloadsPath && asrDriver === 'tapis'){
+                            logger.debug(`[TAPIS DEBUG] Skipping downloadsPath redirect for Tapis provider`);
+                        }
+
+                        if (downloadsPathEnabled && isDownloadAction && !nodeCanServeDownload){
                             const assetsMatch = action.match(/^download\/(.+)$/);
                             if (assetsMatch && assetsMatch[1]){
                                 let assetPath = assetsMatch[1];
@@ -970,62 +988,63 @@ module.exports = {
                                 const s3Url = url.parse(downloadsPath);
                                 s3Url.pathname = path.join(taskId, assetPath);
 
-                                const s3Config = asrProvider.get().getConfig("s3");
+                                const getConfig = asrInstance && typeof asrInstance.getConfig === 'function' ? asrInstance.getConfig.bind(asrInstance) : null;
+                                const s3Config = getConfig ? getConfig("s3") : null;
 
                                 // If URL requires authentication, fetch the object on their behalf and then stream it to them
                                 // If our aws library gets updated to v3, then we could return a redirect to a presigned url instead 
                                 if (s3Config && s3Config.acl !== undefined && s3Config.acl !== "public-read") {
-                                    logger.info(`[TAPIS DEBUG] Streaming secured asset ${assetPath} for ${taskId} from ${s3Config.endpoint}`);
-                                    let key = path.join(taskId, assetPath)
+                                    const accessKey = getConfig ? getConfig("accessKey") : null;
+                                    const secretKey = getConfig ? getConfig("secretKey") : null;
 
-                                    const s3 = new AWS.S3({
-                                        endpoint: new AWS.Endpoint(s3Config.endpoint),
-                                        signatureVersion: 'v4',
-                                        accessKeyId: asrProvider.get().getConfig("accessKey"),
-                                        secretAccessKey: asrProvider.get().getConfig("secretKey")
-                                    });
+                                    if (accessKey && secretKey) {
+                                        logger.info(`[TAPIS DEBUG] Streaming secured asset ${assetPath} for ${taskId} from ${s3Config.endpoint}`);
+                                        let key = path.join(taskId, assetPath)
 
-                                    s3.getObject({ Bucket: s3Config.bucket, Key: key }, (err, data) => {
-                                        if (err) {
-                                          logger.error(`Error encountered downloading object ${err}`);
-                                          res.statusCode = 500;
-                                          res.end('Internal server error');
-                                          return;
-                                        }
+                                        const s3 = new AWS.S3({
+                                            endpoint: new AWS.Endpoint(s3Config.endpoint),
+                                            signatureVersion: 'v4',
+                                            accessKeyId: accessKey,
+                                            secretAccessKey: secretKey
+                                        });
 
-                                        // Set the content-type and content-length headers
-                                        res.setHeader('Content-Type', data.ContentType);
-                                        res.setHeader('Content-Length', data.ContentLength);
+                                        s3.getObject({ Bucket: s3Config.bucket, Key: key }, (err, data) => {
+                                            if (err) {
+                                              logger.error(`Error encountered downloading object ${err}`);
+                                              res.statusCode = 500;
+                                              res.end('Internal server error');
+                                              return;
+                                            }
 
-                                        // Write the object data to the response
-                                        res.write(data.Body);
-                                        res.end();
-                                    });
-                                    return;
+                                            // Set the content-type and content-length headers
+                                            res.setHeader('Content-Type', data.ContentType);
+                                            res.setHeader('Content-Length', data.ContentLength);
 
-                                } else {
-                                    logger.info(`[TAPIS DEBUG] Redirecting download ${pathname} to ${url.format(s3Url)}`);
-                                    res.writeHead(301, {
-                                        'Location': url.format(s3Url)
-                                    });
-                                    res.end();
-                                    return;
+                                            // Write the object data to the response
+                                            res.write(data.Body);
+                                            res.end();
+                                        });
+                                        return;
+                                    } else {
+                                        logger.warn(`[TAPIS DEBUG] Missing access credentials for secured asset ${assetPath}; cannot stream from ${s3Config.endpoint}`);
+                                    }
                                 }
+
+                                logger.info(`[TAPIS DEBUG] Redirecting download ${pathname} to ${url.format(s3Url)}`);
+                                res.writeHead(301, {
+                                    'Location': url.format(s3Url)
+                                });
+                                res.end();
+                                return;
                             }
                         }
 
-                        const node = await routetable.lookupNode(taskId);
-
                         if (node){
-                            // Special handling for TapisNode - handle requests internally
-                            if (node.constructor.name === 'TapisNode') {
+                            // Special handling for TapisNode - handle requests internally when no direct node is registered yet
+                            if (isTapisNode && !tapisNodeHasRegisteredTarget) {
                                 logger.info(`[TAPIS DEBUG] Handling TapisNode request internally: ${pathname}`);
                                 
                                 try {
-                                    // Parse the action from pathname
-                                    const parts = pathname.split('/');
-                                    const action = parts[3]; // /task/<uuid>/<action>
-                                    
                                     if (action === 'info') {
                                         const info = await node.taskInfo(taskId);
                                         json(res, info);
@@ -1071,7 +1090,6 @@ module.exports = {
                                     return;
                                 }
                             } else {
-                                const isDownloadAction = action && action.indexOf('download') === 0;
                                 if (isDownloadAction){
                                     logger.info(`[TAPIS DEBUG] Forwarding download ${pathname} to ${node.proxyTargetUrl()} with token=${previewToken(node.getToken())}`);
                                 }else{
