@@ -972,6 +972,7 @@ module.exports = {
                                 // If URL requires authentication, fetch the object on their behalf and then stream it to them
                                 // If our aws library gets updated to v3, then we could return a redirect to a presigned url instead 
                                 if (s3Config && s3Config.acl !== undefined && s3Config.acl !== "public-read") {
+                                    logger.info(`[TAPIS DEBUG] Streaming secured asset ${assetPath} for ${taskId} from ${s3Config.endpoint}`);
                                     let key = path.join(taskId, assetPath)
 
                                     const s3 = new AWS.S3({
@@ -1000,6 +1001,7 @@ module.exports = {
                                     return;
 
                                 } else {
+                                    logger.info(`[TAPIS DEBUG] Redirecting download ${pathname} to ${url.format(s3Url)}`);
                                     res.writeHead(301, {
                                         'Location': url.format(s3Url)
                                     });
