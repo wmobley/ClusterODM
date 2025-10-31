@@ -447,6 +447,9 @@ module.exports = {
         if (!Array.isArray(taskOptions)) taskOptions = [];
         let odmOptions = [];
 
+        let autoSplitApplied = false;
+        let autoSplitValue = null;
+
         if (config.splitmerge){
             // We automatically set the "sm-cluster" parameter
             // to match the address that was used to reach ClusterODM.
@@ -504,6 +507,8 @@ module.exports = {
 
                 const splitValue = splitNumeric.toString();
                 logger.info(`[SPLIT-MERGE] Setting split value=${splitValue} (images=${imagesCount}, desiredSubmodels=${desiredSubmodels || 'fallback'})`);
+                autoSplitApplied = true;
+                autoSplitValue = splitValue;
                 odmOptions.push({name: 'split', value: splitValue});
 
                 // Add split-overlap for photogrammetric accuracy
@@ -570,6 +575,20 @@ module.exports = {
 
             for (let i in assureOptions){
                 odmOptions.push(assureOptions[i]);
+            }
+        }
+
+        // Re-apply auto split value in case limits clamped it back up
+        if (autoSplitApplied && autoSplitValue !== null) {
+            const splitEntry = odmOptions.find(opt => opt.name === 'split');
+            if (splitEntry) {
+                if (splitEntry.value !== autoSplitValue) {
+                    logger.info(`[SPLIT-MERGE] Forcing split value to ${autoSplitValue} after limits adjustment (previously ${splitEntry.value})`);
+                }
+                splitEntry.value = autoSplitValue;
+            } else {
+                logger.warn(`[SPLIT-MERGE] Auto split value was removed by limits logic, re-inserting with value ${autoSplitValue}`);
+                odmOptions.push({ name: 'split', value: autoSplitValue });
             }
         }
 
