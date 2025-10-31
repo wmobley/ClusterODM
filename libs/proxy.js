@@ -387,6 +387,12 @@ module.exports = {
         };
 
         // Replace token 
+        const previewToken = (token) => {
+            if (!token) return 'none';
+            if (token.length <= 6) return token;
+            return `${token.substring(0,6)}…${token.substring(token.length - 4)}`;
+        };
+
         const overrideRequest = (req, node, query, pathname) => {
             if (node.getToken()){
                 // Override token. When requests come in through
@@ -1060,6 +1066,12 @@ module.exports = {
                                     return;
                                 }
                             } else {
+                                const isDownloadAction = action && action.indexOf('download') === 0;
+                                if (isDownloadAction){
+                                    logger.info(`[TAPIS DEBUG] Forwarding download ${pathname} to ${node.proxyTargetUrl()} with token=${previewToken(node.getToken())}`);
+                                }else{
+                                    logger.debug(`[TAPIS DEBUG] Forwarding ${pathname} to ${node.proxyTargetUrl()} with token=${previewToken(node.getToken())}`);
+                                }
                                 // Regular node - use HTTP proxy
                                 overrideRequest(req, node, query, pathname);
                                 proxy.web(req, res, { target: node.proxyTargetUrl() });
