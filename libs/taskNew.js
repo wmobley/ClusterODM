@@ -449,6 +449,8 @@ module.exports = {
 
         let autoSplitApplied = false;
         let autoSplitValue = null;
+        let autoUseExifApplied = false;
+        let autoRerunFromApplied = false;
 
         if (config.splitmerge){
             // We automatically set the "sm-cluster" parameter
@@ -459,6 +461,7 @@ module.exports = {
             let foundSplit = false, foundSMCluster = false;
             let foundToken = false;
             let foundUseExif = false;
+            let foundRerunFrom = false;
             taskOptions.forEach(to => {
                 if (to.name === 'split'){
                     foundSplit = true;
@@ -471,6 +474,9 @@ module.exports = {
                     odmOptions.push({name: to.name, value: to.value});
                 }else if (to.name === 'use-exif'){
                     foundUseExif = true;
+                    odmOptions.push({name: to.name, value: to.value});
+                }else if (to.name === 'rerun-from'){
+                    foundRerunFrom = true;
                     odmOptions.push({name: to.name, value: to.value});
                 }else{
                     odmOptions.push({name: to.name, value: to.value});
@@ -530,7 +536,14 @@ module.exports = {
 
                 if (!foundUseExif) {
                     logger.info(`[SPLIT-MERGE] Enabling use-exif to ensure georeferencing for split workflow`);
+                    autoUseExifApplied = true;
                     odmOptions.push({ name: 'use-exif', value: true });
+                }
+
+                if (!foundRerunFrom) {
+                    logger.info(`[SPLIT-MERGE] Setting rerun-from=dataset to ensure fresh split directories`);
+                    autoRerunFromApplied = true;
+                    odmOptions.push({ name: 'rerun-from', value: 'dataset' });
                 }
             }
 
@@ -598,6 +611,30 @@ module.exports = {
             } else {
                 logger.warn(`[SPLIT-MERGE] Auto split value was removed by limits logic, re-inserting with value ${autoSplitValue}`);
                 odmOptions.push({ name: 'split', value: autoSplitValue });
+            }
+        }
+        if (autoUseExifApplied) {
+            const useExifEntry = odmOptions.find(opt => opt.name === 'use-exif');
+            if (useExifEntry) {
+                if (useExifEntry.value !== true) {
+                    logger.info(`[SPLIT-MERGE] Forcing use-exif back to true after limits adjustment (previously ${useExifEntry.value})`);
+                }
+                useExifEntry.value = true;
+            } else {
+                logger.warn(`[SPLIT-MERGE] Auto use-exif flag removed by limits logic, re-inserting`);
+                odmOptions.push({ name: 'use-exif', value: true });
+            }
+        }
+        if (autoRerunFromApplied) {
+            const rerunFromEntry = odmOptions.find(opt => opt.name === 'rerun-from');
+            if (rerunFromEntry) {
+                if (String(rerunFromEntry.value).toLowerCase() !== 'dataset') {
+                    logger.info(`[SPLIT-MERGE] Forcing rerun-from back to dataset (previously ${rerunFromEntry.value})`);
+                }
+                rerunFromEntry.value = 'dataset';
+            } else {
+                logger.warn(`[SPLIT-MERGE] Auto rerun-from flag removed by limits logic, re-inserting dataset value`);
+                odmOptions.push({ name: 'rerun-from', value: 'dataset' });
             }
         }
 
