@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+  "test": "node test/test-translate-path.js && node test/test-translate-path-edges.js",
     "winbundle": "node winbundle.js"
   },
   "repository": {

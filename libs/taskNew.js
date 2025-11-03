@@ -94,8 +94,14 @@ const translateImportPathForNode = (importPath, nodeHostname) => {
             if (!srcPrefix) continue;
             if (importPath.indexOf(srcPrefix) === 0){
                 const destPrefix = mapForHost[srcPrefix];
+                // remainder after source prefix
+                let remainder = importPath.substring(srcPrefix.length);
+                // ensure there's a separator between destPrefix and remainder if needed
+                if (remainder && !remainder.startsWith(path.sep) && !destPrefix.endsWith(path.sep)){
+                    remainder = path.sep + remainder;
+                }
                 // Build translated path
-                let translated = destPrefix + importPath.substring(srcPrefix.length);
+                let translated = destPrefix + remainder;
                 // Normalize and ensure it still begins with destPrefix
                 translated = path.normalize(translated);
                 const normalizedDest = path.normalize(destPrefix);
