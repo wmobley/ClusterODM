@@ -72,6 +72,43 @@ const getUuid = async (req) => {
     return utils.uuidv4();
 };
 
+// Translate an import path from Cluster/WebODM namespace to node-local namespace.
+// Looks up mappings in config.node_shared_path_mappings or config.NODE_SHARED_PATH_MAPPINGS.
+const translateImportPathForNode = (importPath, nodeHostname) => {
+    if (!importPath) return null;
+    const mappings = config.node_shared_path_mappings || config.NODE_SHARED_PATH_MAPPINGS || {};
+
+    // Try exact hostname, short hostname (strip domain), then wildcard '*'
+    const candidates = [];
+    if (nodeHostname) candidates.push(nodeHostname);
+    if (nodeHostname && nodeHostname.indexOf('.') !== -1) candidates.push(nodeHostname.split('.')[0]);
+    candidates.push('*');
+
+    for (const key of candidates){
+        if (!key) continue;
+        const mapForHost = mappings[key];
+        if (!mapForHost) continue;
+
+        // mapForHost is an object of sourcePrefix -> destPrefix
+        for (const srcPrefix in mapForHost){
+            if (!srcPrefix) continue;
+            if (importPath.indexOf(srcPrefix) === 0){
+                const destPrefix = mapForHost[srcPrefix];
+                // Build translated path
+                let translated = destPrefix + importPath.substring(srcPrefix.length);
+                // Normalize and ensure it still begins with destPrefix
+                translated = path.normalize(translated);
+                const normalizedDest = path.normalize(destPrefix);
+                if (translated.indexOf(normalizedDest) === 0){
+                    return translated;
+                }
+            }
+        }
+    }
+
+    return null;
+};
+
 module.exports = {
     // @return {object} Context object with methods and variables to use during task/new operations 
     createContext: async function(req, res){
@@ -217,6 +254,12 @@ module.exports = {
     
                 else if (fieldname === 'name' && val){
                     params.taskName = val;
+                }
+
+                // Support path-based import (shared filesystem) - clients may post import_path
+                else if ((fieldname === 'import_path' || fieldname === 'importPath') && val){
+                    params.import_path = val;
+                    logger.info(`[TAPIS DEBUG] Detected import_path field: ${val}`);
                 }
     
                 else if (fieldname === 'skipPostProcessing' && val === 'true'){
@@ -794,6 +837,28 @@ module.exports = {
                 return curl;
             };
 
+            // If the request included an import_path (shared filesystem), capture it
+            const pathImport = params.import_path || null;
+
+            // Helper to forward a path-based task to a node (no file upload)
+            const forwardPathToNode = async (nodeObj, translatedPath) => {
+                return new Promise((resolve, reject) => {
+                    const body = [];
+                    body.push({ name: 'name', contents: name });
+                    body.push({ name: 'options', contents: JSON.stringify(taskOptions) });
+                    body.push({ name: 'import_path', contents: translatedPath });
+
+                    const nodeTokenParam = nodeObj.getToken ? `?token=${nodeObj.getToken()}` : '';
+                    const url = `${nodeObj.proxyTargetUrl()}/task/new${nodeTokenParam}`;
+
+                    const curl = curlInstance(resolve, reject, url, body, (res) => {
+                        if (!res.uuid) throw new Error('no uuid in node response');
+                    });
+
+                    curl.perform();
+                });
+            };
+
             const taskNewInit = async () => {
                 return new Promise((resolve, reject) => {
                     const body = [];
@@ -932,6 +997,34 @@ module.exports = {
             const doUpload = async () => {
                 const MAX_UPLOAD_RETRIES = 5;
                 eventEmitter.emit('close');
+
+                // If this task was submitted with an import_path, attempt to translate and forward it
+                if (pathImport) {
+                    try {
+                        const translated = translateImportPathForNode(pathImport, node.nodeData && node.nodeData.hostname ? node.nodeData.hostname : (node.hostname || null));
+                        if (translated) {
+                            logger.info(`[TAPIS DEBUG] Forwarding path-based task ${uuid} to node ${node} using import_path ${translated}`);
+                            await forwardPathToNode(node, translated);
+
+                            // Register routing and cleanup similar to upload flow
+                            await routetable.add(uuid, node, token);
+                            await tasktable.delete(uuid);
+                            try { utils.rmdir(tmpPath); } catch(e){}
+
+                            if (global.taskProcessingDirs) {
+                                global.taskProcessingDirs.delete(tmpPath);
+                                logger.info(`[TAPIS DEBUG] Removed directory ${tmpPath} from processing after path-forward, remaining dirs: ${global.taskProcessingDirs.size}`);
+                            }
+
+                            return;
+                        } else {
+                            logger.warn(`[TAPIS DEBUG] No mapping found for import_path ${pathImport} on node ${node}, falling back to upload`);
+                        }
+                    } catch (e) {
+                        logger.error(`[TAPIS DEBUG] Failed forwarding path-based task to node ${node}: ${e.message}`);
+                        // Allow fallback to upload below (the outer retry logic will handle failures)
+                    }
+                }
 
                 try{
                     if (!autoscale) node.incTransients();

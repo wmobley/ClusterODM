@@ -29,4 +29,10 @@
         "requireStaff": true,
         "timeoutMs": 10000
     }
+    ,
+    "node_shared_path_mappings": {
+        "*": {
+            "/corral/webodm/media": "/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media"
+        }
+    }
 }
