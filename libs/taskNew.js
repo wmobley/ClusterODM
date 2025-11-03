@@ -1156,5 +1156,8 @@ module.exports = {
         }else{
             throw new Error("No nodes available");
         }
-    }
+    },
+
+    // Export helper for testing
+    translateImportPathForNode: translateImportPathForNode
 };
