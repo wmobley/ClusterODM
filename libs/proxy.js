@@ -691,7 +691,8 @@ module.exports = {
                         logger.info(`[TAPIS DEBUG] Saving body.json and copying files to UUID directory...`);
                         
                         // Copy files from random temp dir to UUID dir
-                        if (params.fileNames && params.fileNames.length > 0 && global.lastTempDir) {
+                        // If an import_path was provided, skip copying uploaded files - path-based tasks should not touch files
+                        if (!params.import_path && params.fileNames && params.fileNames.length > 0 && global.lastTempDir) {
                             const srcDir = global.lastTempDir;
                             logger.info(`[TAPIS DEBUG] Copying files from ${srcDir} to ${tmpPath}`);
                             

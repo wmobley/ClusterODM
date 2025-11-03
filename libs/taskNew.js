@@ -693,6 +693,7 @@ module.exports = {
     process: async function(req, res, cloudProvider, uuid, params, token, limits, getLimitedOptions){
         const tmpPath = path.join("tmp", uuid);
         let { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
+        const pathImport = params.import_path || null;
         
         // Initialize global directory tracking if not exists
         if (!global.taskProcessingDirs) {
@@ -711,19 +712,22 @@ module.exports = {
 
         logger.info(`[TAPIS DEBUG] Starting task processing for UUID: ${uuid}`);
         
-        // Debug: Check if files still exist at the very start of task processing
-        try {
-            const fs = require('fs');
-            const filesAtProcessStart = fs.readdirSync(tmpPath);
-            logger.info(`[TAPIS DEBUG] Files in tmpPath at START of task processing: ${filesAtProcessStart.join(', ')}`);
-        } catch (e) {
-            logger.error(`[TAPIS DEBUG] Cannot read tmpPath at START of task processing: ${e.message}`);
+        // Debug: Check if files still exist at the very start of task processing (skip for path-based tasks)
+        if (!pathImport) {
+            try {
+                const fs = require('fs');
+                const filesAtProcessStart = fs.readdirSync(tmpPath);
+                logger.info(`[TAPIS DEBUG] Files in tmpPath at START of task processing: ${filesAtProcessStart.join(', ')}`);
+            } catch (e) {
+                logger.error(`[TAPIS DEBUG] Cannot read tmpPath at START of task processing: ${e.message}`);
+            }
         }
         
         logger.info(`[TAPIS DEBUG] fileNames: ${JSON.stringify(fileNames)}, imagesCount: ${imagesCount}`);
         logger.info(`[TAPIS DEBUG] taskName: ${taskName}, token: ${token ? 'present' : 'missing'}`);
 
-        if (fileNames.length < 1){
+        // If this is a path-based task, skip the file count check
+        if (!pathImport && fileNames.length < 1){
             logger.error(`[TAPIS DEBUG] ERROR: Not enough images (${fileNames.length} files uploaded)`);
             throw new Error(`Not enough images (${fileNames.length} files uploaded)`);
         }
@@ -847,22 +851,34 @@ module.exports = {
             const pathImport = params.import_path || null;
 
             // Helper to forward a path-based task to a node (no file upload)
+            // Use axios + form-data (non-blocking) instead of node-libcurl to avoid potential event-loop blocking
+            const axios = require('axios');
+            const FormData = require('form-data');
             const forwardPathToNode = async (nodeObj, translatedPath) => {
-                return new Promise((resolve, reject) => {
-                    const body = [];
-                    body.push({ name: 'name', contents: name });
-                    body.push({ name: 'options', contents: JSON.stringify(taskOptions) });
-                    body.push({ name: 'import_path', contents: translatedPath });
+                const form = new FormData();
+                form.append('name', name);
+                form.append('options', JSON.stringify(taskOptions));
+                form.append('import_path', translatedPath);
 
-                    const nodeTokenParam = nodeObj.getToken ? `?token=${nodeObj.getToken()}` : '';
-                    const url = `${nodeObj.proxyTargetUrl()}/task/new${nodeTokenParam}`;
+                const token = nodeObj.getToken ? nodeObj.getToken() : null;
+                const nodeUrl = `${nodeObj.proxyTargetUrl()}/task/new${token ? `?token=${token}` : ''}`;
 
-                    const curl = curlInstance(resolve, reject, url, body, (res) => {
-                        if (!res.uuid) throw new Error('no uuid in node response');
-                    });
+                const headers = Object.assign({}, form.getHeaders());
 
-                    curl.perform();
+                // Timeout reasonably short so we don't block for minutes
+                const timeoutMs = 60 * 1000; // 60s
+
+                const resp = await axios.post(nodeUrl, form, {
+                    headers,
+                    maxBodyLength: Infinity,
+                    timeout: timeoutMs
                 });
+
+                if (!resp || !resp.data || !resp.data.uuid) {
+                    throw new Error('no uuid in node response');
+                }
+
+                return resp.data;
             };
 
             const taskNewInit = async () => {
