@@ -34,21 +34,21 @@
       "maxJobTime": "02:00:00"
     },
     {
-      "maxImages": 100,
+      "maxImages": 200,
       "jobCount": 2,
       "coresPerNode": 16,
       "memoryMB": 30720,
-      "maxJobTime": "04:00:00"
+      "maxJobTime": "02:00:00"
     },
     {
-      "maxImages": 150,
+      "maxImages": 350,
       "jobCount": 3,
       "coresPerNode": 16,
       "memoryMB": 30720,
       "maxJobTime": "06:00:00"
     },
     {
-      "maxImages": 200,
+      "maxImages": 500,
       "jobCount": 4,
       "coresPerNode": 16,
       "memoryMB": 30720,
