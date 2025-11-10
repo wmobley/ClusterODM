@@ -21,7 +21,7 @@
   "stale-uploads-timeout": 0,
   "ssl-key": "",
   "ssl-cert": "",
-  "asr": "",
+  "asr": "tapis-config.json",
   "allow-local-download-bypass": false,
   "force-node-downloads": false,
   "webodm": {

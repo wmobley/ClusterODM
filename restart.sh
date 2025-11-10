@@ -13,6 +13,16 @@ LOG_FILE="clusterodm-tapis.log"
 ASR_CONFIG="tapis-config.json"
 NODE_CONFIG="clusterodm-config.json"
 
+if [[ ! -f "${ASR_CONFIG}" ]]; then
+    echo "ASR config ${ASR_CONFIG} not found. Please create it before running restart.sh."
+    exit 1
+fi
+
+if [[ ! -f "${NODE_CONFIG}" ]]; then
+    echo "Node config ${NODE_CONFIG} not found. Please create it before running restart.sh."
+    exit 1
+fi
+
 # Allow overrides via environment variables, but fall back to defaults.
 PORT="${PORT:-3000}"
 ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-10000}"
