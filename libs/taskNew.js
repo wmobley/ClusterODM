@@ -74,9 +74,14 @@ const getUuid = async (req) => {
 
 // Translate an import path from Cluster/WebODM namespace to node-local namespace.
 // Looks up mappings in config.node_shared_path_mappings or config.NODE_SHARED_PATH_MAPPINGS.
+const FALLBACK_SHARED_PATH_MAPPINGS = {
+    '*': {
+        '/corral/webodm/media': '/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media'
+    }
+};
 const translateImportPathForNode = (importPath, nodeHostname) => {
     if (!importPath) return null;
-    const mappings = config.node_shared_path_mappings || config.NODE_SHARED_PATH_MAPPINGS || {};
+    const mappings = config.node_shared_path_mappings || config.NODE_SHARED_PATH_MAPPINGS || FALLBACK_SHARED_PATH_MAPPINGS || {};
 
     // Try exact hostname, short hostname (strip domain), then wildcard '*'
     const candidates = [];
