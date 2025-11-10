@@ -120,6 +120,21 @@ const translateImportPathForNode = (importPath, nodeHostname) => {
     return null;
 };
 
+const parseNodeTaskResponse = (resp) => {
+    if (!resp) throw new Error('node response missing data');
+    const data = resp.data !== undefined ? resp.data : resp;
+    if (!data) throw new Error('node response missing data');
+    if (data.error) throw new Error(data.error);
+    if (!data.uuid) {
+        let snippet = '';
+        try{
+            snippet = ` (${JSON.stringify(data).slice(0, 200)})`;
+        }catch(_){}
+        throw new Error(`node response missing uuid${snippet}`);
+    }
+    return data;
+};
+
 module.exports = {
     // @return {object} Context object with methods and variables to use during task/new operations 
     createContext: async function(req, res){
@@ -879,11 +894,7 @@ module.exports = {
                     timeout: timeoutMs
                 });
 
-                if (!resp || !resp.data || !resp.data.uuid) {
-                    throw new Error('no uuid in node response');
-                }
-
-                return resp.data;
+                return parseNodeTaskResponse(resp);
             };
 
             const taskNewInit = async () => {
@@ -1186,5 +1197,6 @@ module.exports = {
     },
 
     // Export helper for testing
-    translateImportPathForNode: translateImportPathForNode
+    translateImportPathForNode: translateImportPathForNode,
+    parseNodeTaskResponse: parseNodeTaskResponse
 };
