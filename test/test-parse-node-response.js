@@ -1,12 +1,13 @@
 const assert = require('assert');
-const taskNew = require('../libs/taskNew');
-
-const parseNodeTaskResponse = taskNew.parseNodeTaskResponse;
 
 (async () => {
     try {
+        const { parseNodeTaskResponse } = require('../libs/taskNew');
         const ok = parseNodeTaskResponse({ data: { uuid: '1234' } });
         assert.strictEqual(ok.uuid, '1234');
+
+        const okBare = parseNodeTaskResponse({ uuid: 'abcd' });
+        assert.strictEqual(okBare.uuid, 'abcd');
 
         assert.throws(() => parseNodeTaskResponse({ data: { error: 'boom' } }), /boom/);
         assert.throws(() => parseNodeTaskResponse({ data: { hello: 'world' } }), /missing uuid/);

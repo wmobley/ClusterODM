@@ -882,14 +882,14 @@ module.exports = {
 
                 const token = nodeObj.getToken ? nodeObj.getToken() : null;
                 const nodeUrl = `${nodeObj.proxyTargetUrl()}/task/new${token ? `?token=${token}` : ''}`;
-
-                const headers = Object.assign({}, form.getHeaders());
-
+                
                 // Timeout reasonably short so we don't block for minutes
                 const timeoutMs = 60 * 1000; // 60s
 
                 const resp = await axios.post(nodeUrl, form, {
-                    headers,
+                    headers: Object.assign({}, form.getHeaders(), {
+                        'set-uuid': uuid
+                    }),
                     maxBodyLength: Infinity,
                     timeout: timeoutMs
                 });
