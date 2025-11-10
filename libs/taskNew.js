@@ -705,7 +705,7 @@ module.exports = {
         logger.info(`[TAPIS DEBUG] Marked directory ${tmpPath} as processing, total processing dirs: ${global.taskProcessingDirs.size}`);
         
         // Fix imagesCount - use actual fileNames array length instead of the potentially incorrect counter
-        if (fileNames && Array.isArray(fileNames)) {
+        if (!pathImport && fileNames && Array.isArray(fileNames)) {
             imagesCount = fileNames.length;
             logger.info(`[TAPIS DEBUG] Fixed imagesCount from ${params.imagesCount} to ${imagesCount} based on fileNames array`);
         }
@@ -1095,7 +1095,7 @@ module.exports = {
                 try{
                     dmHostname = asr.generateHostname(imagesCount);
                     logger.info(`[TAPIS DEBUG] Generated hostname: ${dmHostname}, calling asr.createNode`);
-                    node = await asr.createNode(req, imagesCount, token, dmHostname, status, options, fileNames, tmpPath, uuid);
+                    node = await asr.createNode(req, imagesCount, token, dmHostname, status, options, fileNames, tmpPath, uuid, pathImport);
                     logger.info(`[TAPIS DEBUG] Node created successfully: ${node ? node.constructor.name : 'null'}`);
                     
                     // Debug: Check if files still exist after node creation

@@ -28,6 +28,7 @@ const netutils = require("./libs/netutils");
 const asrProvider = require("./libs/asrProvider");
 const routetable = require("./libs/routetable");
 const tasktable = require("./libs/tasktable");
+const { translateImportPathForNode } = require("./libs/taskNew");
 
 const decodeJwtPayload = (token) => {
   try {
@@ -925,14 +926,30 @@ module.exports = {
                     logger.warn(`[TAPIS DEBUG] taskOptions is missing or invalid: ${pendingTask.taskOptions}`);
                   }
 
-                  // Add image files if available
-                  if (pendingTask.fileNames && pendingTask.tmpPath) {
+                  let usedImportPath = false;
+                  if (pendingTask.pathImport) {
+                    const translated = translateImportPathForNode(pendingTask.pathImport, hostname);
+                    if (translated) {
+                      form.append('import_path', translated);
+                      usedImportPath = true;
+                      logger.info(`[TAPIS DEBUG] Using import_path ${translated} for pending Tapis task ${pendingTask.clusterTaskId || pendingTask.taskId || 'auto'}`);
+                    } else {
+                      logger.warn(`[TAPIS DEBUG] Could not translate import_path ${pendingTask.pathImport} for node ${hostname}, falling back to HTTP upload`);
+                    }
+                  }
+
+                  // Add image files if available (and we are not using import_path)
+                  if (!usedImportPath && pendingTask.fileNames && pendingTask.tmpPath) {
                     for (const fileName of pendingTask.fileNames) {
                       const filePath = path.join(pendingTask.tmpPath, fileName);
                       if (fs.existsSync(filePath)) {
                         form.append('images', fs.createReadStream(filePath));
                       }
                     }
+                  }
+
+                  if (!usedImportPath && (!pendingTask.fileNames || pendingTask.fileNames.length === 0)) {
+                    logger.warn(`[TAPIS DEBUG] Pending task has no images to upload and no usable import_path; NodeODM may reject the request.`);
                   }
 
                   const nodeUrl = `http://${hostname}:${port}`;

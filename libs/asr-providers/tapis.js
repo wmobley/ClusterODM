@@ -595,7 +595,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     pendingTasks = new Map();
 
     // Override createNode to just submit Tapis job and wait for NodeODM registration
-    async createNode(req, imagesCount, token, hostname, status, taskOptions, fileNames, tmpPath, clusterTaskId = null){
+    async createNode(req, imagesCount, token, hostname, status, taskOptions, fileNames, tmpPath, clusterTaskId = null, pathImport = null){
         logger.info(`[TAPIS DEBUG] createNode called with imagesCount: ${imagesCount}, hostname: ${hostname}`);
 
         if (!this.canHandle(imagesCount)) {
@@ -694,6 +694,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 tapisJobId,
                 nodeUser,
                 req,
+                pathImport,
                 submittedJobs: submissionResult.submittedJobs
             });
 
