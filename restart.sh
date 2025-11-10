@@ -11,6 +11,7 @@ cd "${BASE_DIR}"
 PID_FILE="clusterodm-tapis.pid"
 LOG_FILE="clusterodm-tapis.log"
 ASR_CONFIG="tapis-config.json"
+NODE_CONFIG="clusterodm-config.json"
 
 # Allow overrides via environment variables, but fall back to defaults.
 PORT="${PORT:-3000}"
@@ -34,6 +35,7 @@ start_clusterodm() {
     echo "Starting ClusterODM-Tapis on port ${PORT} (admin web ${ADMIN_WEB_PORT})"
     node index.js \
         --asr "${ASR_CONFIG}" \
+        --config "${NODE_CONFIG}" \
         --port "${PORT}" \
         --admin-web-port "${ADMIN_WEB_PORT}" \
         --allow-local-download-bypass true \
