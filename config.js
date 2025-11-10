@@ -96,10 +96,26 @@ if (argv.config !== defaultConfigFilePath){
     }
 }
 
+const castValue = (value, cast) => {
+    if (value === undefined) return undefined;
+    if (cast === String) {
+        if (typeof value === 'string' || value === null) return value === null ? '' : value;
+        // Preserve objects/arrays (used by node_shared_path_mappings and similar)
+        return value;
+    }
+    return cast(value);
+};
+
 function readConfig(key, cast = String){
-    if (userConfig[key] !== undefined) return cast(userConfig[key]);
-    else if (argv[key] !== undefined) return cast(argv[key]);
-    else return '';
+    if (userConfig[key] !== undefined) {
+        const casted = castValue(userConfig[key], cast);
+        if (casted !== undefined) return casted;
+    }
+    if (argv[key] !== undefined) {
+        const casted = castValue(argv[key], cast);
+        if (casted !== undefined) return casted;
+    }
+    return '';
 }
 
 let config = {};
