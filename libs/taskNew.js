@@ -31,6 +31,10 @@ const asrProvider = require('./asrProvider');
 const logger = require('./logger');
 const events = require('events');
 
+const IMAGE_EXTENSIONS = new Set([
+    '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.pgm', '.gif'
+]);
+
 const assureUniqueFilename = (dstPath, filename) => {
     return new Promise((resolve, _) => {
         const dstFile = path.join(dstPath, filename);
@@ -133,6 +137,46 @@ const parseNodeTaskResponse = (resp) => {
         throw new Error(`node response missing uuid${snippet}`);
     }
     return data;
+};
+
+const countImagesInDirectory = async (dirPath) => {
+    try {
+        const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+        let total = 0;
+
+        for (const entry of entries) {
+            const entryPath = path.join(dirPath, entry.name);
+            if (entry.isDirectory()) {
+                total += await countImagesInDirectory(entryPath);
+            } else if (entry.isFile()) {
+                const ext = path.extname(entry.name).toLowerCase();
+                if (IMAGE_EXTENSIONS.has(ext)) total++;
+            }
+        }
+
+        return total;
+    } catch (err) {
+        logger.warn(`[TAPIS DEBUG] Failed to inspect directory ${dirPath}: ${err.message}`);
+        throw err;
+    }
+};
+
+const countImagesForImportPath = async (importPath) => {
+    if (!importPath) return 0;
+    try {
+        const stats = await fs.promises.stat(importPath);
+        if (stats.isFile()) {
+            const ext = path.extname(importPath).toLowerCase();
+            return IMAGE_EXTENSIONS.has(ext) ? 1 : 0;
+        } else if (stats.isDirectory()) {
+            return await countImagesInDirectory(importPath);
+        } else {
+            logger.warn(`[TAPIS DEBUG] import_path ${importPath} is neither file nor directory`);
+        }
+    } catch (err) {
+        logger.warn(`[TAPIS DEBUG] Cannot stat import_path ${importPath}: ${err.message}`);
+    }
+    return 0;
 };
 
 module.exports = {
@@ -731,6 +775,18 @@ module.exports = {
         if (!pathImport && fileNames && Array.isArray(fileNames)) {
             imagesCount = fileNames.length;
             logger.info(`[TAPIS DEBUG] Fixed imagesCount from ${params.imagesCount} to ${imagesCount} based on fileNames array`);
+        } else if (pathImport) {
+            try {
+                const counted = await countImagesForImportPath(pathImport);
+                if (counted > 0) {
+                    logger.info(`[TAPIS DEBUG] Counted ${counted} images from import_path ${pathImport}`);
+                    imagesCount = counted;
+                } else {
+                    logger.warn(`[TAPIS DEBUG] Could not determine image count from import_path ${pathImport}; falling back to provided value ${imagesCount}`);
+                }
+            } catch (err) {
+                logger.warn(`[TAPIS DEBUG] Failed to count images for import_path ${pathImport}: ${err.message}`);
+            }
         }
 
         logger.info(`[TAPIS DEBUG] Starting task processing for UUID: ${uuid}`);
