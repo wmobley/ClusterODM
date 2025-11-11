@@ -761,6 +761,7 @@ module.exports = {
     process: async function(req, res, cloudProvider, uuid, params, token, limits, getLimitedOptions){
         const tmpPath = path.join("tmp", uuid);
         let { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
+        if (!Array.isArray(fileNames)) fileNames = [];
         const pathImport = params.import_path || null;
         
         // Initialize global directory tracking if not exists
@@ -825,12 +826,13 @@ module.exports = {
         let node = await nodes.findBestAvailableNode(imagesCount, true);
         
         // Do we need to / can we create a new node via autoscaling?
+        const autoscaleImagesCount = imagesCount > 0 ? imagesCount : fileNames.length;
         const autoscale = (!node || node.availableSlots() === 0) && 
                             asrProvider.isAllowedToCreateNewNodes() &&
-                            asrProvider.canHandle(fileNames.length);
+                            asrProvider.canHandle(autoscaleImagesCount);
         
         logger.info(`[TAPIS DEBUG] Autoscale decision: ${autoscale}, node: ${node ? 'exists' : 'null'}`);
-        logger.info(`[TAPIS DEBUG] ASR canCreateNodes: ${asrProvider.isAllowedToCreateNewNodes()}, canHandle: ${asrProvider.canHandle(fileNames.length)}`);
+        logger.info(`[TAPIS DEBUG] ASR canCreateNodes: ${asrProvider.isAllowedToCreateNewNodes()}, canHandle: ${asrProvider.canHandle(autoscaleImagesCount)}`);
         
         // TEMPORARY: Log the autoscale path that would be taken
         if (autoscale) {
