@@ -19,7 +19,7 @@
     "coresPerNode": 2,
     "memoryMB": 8192,
     "archiveOnAppError": true,
-    "maxNodesPerJob": 1
+    "maxNodesPerJob": 2
   },
   "maxRuntime": 7200,
   "maxUploadTime": 3600,
@@ -27,37 +27,22 @@
   "createRetries": 3,
   "imageSizeMapping": [
     {
-      "maxImages": 50,
-      "jobCount": 1,
-      "coresPerNode": 16,
-      "memoryMB": 30720,
-      "maxJobTime": "02:00:00"
-    },
-    {
       "maxImages": 200,
-      "jobCount": 2,
+      "jobCount": 1,
+      "nodeCount": 1,
+      "logicalQueue": "vm-small",
       "coresPerNode": 16,
+      "maxConcurrency": 16,
       "memoryMB": 30720,
-      "maxJobTime": "02:00:00"
-    },
-    {
-      "maxImages": 350,
-      "jobCount": 3,
-      "coresPerNode": 16,
-      "memoryMB": 30720,
-      "maxJobTime": "06:00:00"
-    },
-    {
-      "maxImages": 500,
-      "jobCount": 4,
-      "coresPerNode": 16,
-      "memoryMB": 30720,
-      "maxJobTime": "08:00:00"
+      "maxJobTime": "04:00:00"
     },
     {
       "maxImages": 10000,
-      "jobCount": 4,
-      "coresPerNode": 16,
+      "jobCount": 1,
+      "nodeCount": 2,
+      "logicalQueue": "development",
+      "coresPerNode": 64,
+      "maxConcurrency": 64,
       "memoryMB": 30720,
       "maxJobTime": "12:00:00"
     }

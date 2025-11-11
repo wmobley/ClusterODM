@@ -151,13 +151,18 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const nodesForJob = Math.max(1, Math.min(requestedNodeCount, maxNodesPerJob));
         const jobCountRaw = jobProps.jobCount ?? 1;
         const nodesToSubmit = Math.max(1, parseInt(jobCountRaw, 10) || 1);
+        const tapisJobCountRaw = jobProps.tapisJobCount ?? jobProps.jobsPerSubmission ?? jobCountRaw;
+        const jobsToSubmit = Math.max(1, parseInt(tapisJobCountRaw, 10) || 1);
+        const totalWorkerNodes = Math.max(nodesToSubmit, nodesForJob);
 
         return {
             jobProps,
             requestedNodeCount,
             maxNodesPerJob,
             nodesToSubmit,
-            nodesForJob
+            nodesForJob,
+            jobsToSubmit,
+            totalWorkerNodes
         };
     }
 
@@ -407,29 +412,33 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const defaultCores = this.getConfig("job.coresPerNode", 1);
         const defaultMemory = this.getConfig("job.memoryMB", 4096);
         const defaultJobTime = this.getConfig("job.maxJobTime", "01:00:00");
-        const logicalQueue = this.getConfig("system.logicalQueue", "vm-small");
+        const logicalQueue = jobProps.logicalQueue || this.getConfig("system.logicalQueue", "vm-small");
 
         const requestedNodeCount = plan.requestedNodeCount;
         const nodesToSubmit = plan.nodesToSubmit;
+        const jobsToSubmit = plan.jobsToSubmit || nodesToSubmit;
         const nodesForJob = plan.nodesForJob || 1;
         const maxNodesPerJob = plan.maxNodesPerJob;
+        const totalWorkerNodes = plan.totalWorkerNodes || Math.max(nodesToSubmit, nodesForJob);
 
         if (requestedNodeCount > maxNodesPerJob) {
             logger.warn(`[TAPIS DEBUG] Requested ${requestedNodeCount} compute node(s) but configuration limits to ${maxNodesPerJob}; job will reserve ${nodesForJob}`);
         }
 
-        logger.info(`[TAPIS DEBUG] Submission plan: jobCount=${nodesToSubmit}, nodesPerJob=${nodesForJob}, requestedNodeCount=${requestedNodeCount}, maxNodesPerJob=${maxNodesPerJob}`);
+        logger.info(`[TAPIS DEBUG] Submission plan: totalNodeODM=${nodesToSubmit}, tapisJobs=${jobsToSubmit}, nodesPerJob=${nodesForJob}, requestedNodeCount=${requestedNodeCount}, maxNodesPerJob=${maxNodesPerJob}, queue=${logicalQueue}`);
 
         const submittedJobs = [];
 
         try {
-            for (let i = 0; i < nodesToSubmit; i++){
+            for (let i = 0; i < jobsToSubmit; i++){
                 const jobIndex = i + 1;
-                const jobName = nodesToSubmit > 1 ? `${jobId}-${jobIndex}` : jobId;
+                const jobName = jobsToSubmit > 1 ? `${jobId}-${jobIndex}` : jobId;
+                const replicasForJob = nodesForJob;
+                const nodeMaxConcurrency = jobProps.maxConcurrency || jobProps.nodeMaxConcurrency || jobProps.coresPerNode || defaultCores || 1;
 
                 const jobDefinition = {
                     name: `${jobName}`,
-                    description: `ClusterODM NodeODM instance for ${imagesCount} images (waiting for data) [${jobIndex}/${nodesToSubmit}]`,
+                    description: `ClusterODM NodeODM instance for ${imagesCount} images (waiting for data) [${jobIndex}/${jobsToSubmit}]`,
                     appId: this.getConfig("app.appId"),
                     appVersion: this.getConfig("app.appVersion"),
                     execSystemId: this.getConfig("system.executionSystemId"),
@@ -442,12 +451,18 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     archiveOnAppError: this.getConfig("job.archiveOnAppError", true),
                     parameterSet: {
                         appArgs: [
-                            { arg: "14", name: "max_concurrency", description: "Maximum number of concurrent processing tasks" },
+                            { arg: `${nodeMaxConcurrency}`, name: "max_concurrency", description: "Maximum number of concurrent processing tasks" },
                             { arg: "3001", name: "nodeodm_port", description: "NodeODM service port" },
                             { arg: "https://clusterodm.tacc.utexas.edu", name: "clusterodm_url", description: "ClusterODM URL for registration" }
                         ],
                         schedulerOptions: [
                             { arg: `-A PT2050-DataX`, name: "TACC Allocation", description: "The TACC allocation associated with this job execution" }
+                        ],
+                        envVariables: [
+                            { key: "NODEODM_REPLICAS_PER_JOB", value: `${replicasForJob}` },
+                            { key: "NODEODM_TOTAL_VIRTUAL_NODES", value: `${totalWorkerNodes}` },
+                            { key: "NODEODM_JOB_INDEX", value: `${jobIndex}` },
+                            { key: "NODEODM_JOB_COUNT", value: `${jobsToSubmit}` }
                         ]
                     },
                     // No fileInputs - NodeODM will start and wait for data from ClusterODM
@@ -463,7 +478,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     }],
                     tags: ["portalName: PTDATAX"]
                 };
-                logger.debug(`[TAPIS DEBUG] Job definition being submitted (no input data) [${jobIndex}/${nodesToSubmit}]:`, JSON.stringify(jobDefinition, null, 2));
+                logger.debug(`[TAPIS DEBUG] Job definition being submitted (no input data) [${jobIndex}/${jobsToSubmit}]:`, JSON.stringify(jobDefinition, null, 2));
                 logger.debug(`[TAPIS DEBUG] Submitting to endpoint: ${this.getConfig("tapis.baseUrl")}/v3/jobs/submit`);
 
                 const response = await client.post('/v3/jobs/submit', jobDefinition, {
@@ -473,7 +488,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 });
                 const tapisJobId = response.data.result.uuid;
 
-                logger.info(`[TAPIS DEBUG] Successfully submitted Tapis job ${tapisJobId} for ClusterODM task ${jobId} (${jobName}) [${jobIndex}/${nodesToSubmit}]`);
+                logger.info(`[TAPIS DEBUG] Successfully submitted Tapis job ${tapisJobId} for ClusterODM task ${jobId} (${jobName}) [${jobIndex}/${jobsToSubmit}]`);
                 logger.debug(`[TAPIS DEBUG] Full response:`, JSON.stringify(response.data, null, 2));
 
                 const jobRecord = {
@@ -482,7 +497,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     baseJobId: jobId,
                     index: jobIndex,
                     requestedNodeCount,
-                    nodesToSubmit
+                    nodesToSubmit: nodesForJob,
+                    totalWorkerNodes
                 };
 
                 submittedJobs.push(jobRecord);
@@ -498,7 +514,10 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 primaryJobId: submittedJobs[0]?.tapisJobId || null,
                 submittedJobs,
                 requestedNodeCount,
-                nodesToSubmit
+                nodesToSubmit,
+                jobsToSubmit,
+                nodesPerJob: nodesForJob,
+                totalWorkerNodes
             };
         } catch (e) {
             const errorMsg = e.response?.data?.message || e.message;
@@ -623,6 +642,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
         const submissionPlan = this.calculateNodeSubmissionPlan(imagesCount);
         const nodesToSubmit = submissionPlan.nodesToSubmit || 1;
+        const jobsToSubmit = submissionPlan.jobsToSubmit || nodesToSubmit;
 
         const nodesReserved = nodesToSubmit;
 
@@ -631,8 +651,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
             // Check if we've reached the job limit
             const machineLimit = this.getMachinesLimit();
-            if (machineLimit !== -1 && (this.activeJobs.size + nodesToSubmit) > machineLimit) {
-                throw new Error(`Job limit reached (${machineLimit}). Active: ${this.activeJobs.size}, requested: ${nodesToSubmit}`);
+            if (machineLimit !== -1 && (this.activeJobs.size + jobsToSubmit) > machineLimit) {
+                throw new Error(`Job limit reached (${machineLimit}). Active: ${this.activeJobs.size}, requested: ${jobsToSubmit}`);
             }
 
             // Submit Tapis job directly without creating virtual TapisNode (no file upload yet)
@@ -695,7 +715,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 nodeUser,
                 req,
                 pathImport,
-                submittedJobs: submissionResult.submittedJobs
+                submittedJobs: submissionResult.submittedJobs,
+                nodesPerJob: submissionResult.nodesPerJob || submissionPlan.nodesForJob || 1,
+                totalWorkerNodes: submissionResult.totalWorkerNodes || submissionPlan.totalWorkerNodes || nodesToSubmit
             });
 
             logger.info(`[TAPIS DEBUG] Tapis job ${tapisJobId} submitted, task ${clusterTaskUuid} pending NodeODM registration (files kept local)`);

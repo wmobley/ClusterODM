@@ -563,9 +563,12 @@ module.exports = {
                 if (asr && typeof asr.calculateNodeSubmissionPlan === 'function') {
                     try {
                         const plan = asr.calculateNodeSubmissionPlan(imagesCount);
-                        if (plan && plan.nodesToSubmit && plan.nodesToSubmit > 1) {
-                            desiredSubmodels = plan.nodesToSubmit;
-                            logger.info(`[SPLIT-MERGE] Using ASR submission plan nodesToSubmit=${desiredSubmodels}`);
+                        if (plan) {
+                            const concurrencyHint = plan.totalWorkerNodes || plan.nodesToSubmit || plan.nodesForJob;
+                            if (concurrencyHint && concurrencyHint > 1) {
+                                desiredSubmodels = concurrencyHint;
+                                logger.info(`[SPLIT-MERGE] Using ASR submission plan concurrency=${desiredSubmodels}`);
+                            }
                         }
                     } catch (e) {
                         logger.warn(`[SPLIT-MERGE] Failed to inspect ASR submission plan: ${e.message}`);
