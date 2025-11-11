@@ -29,6 +29,7 @@ const odmOptions = require('./odmOptions');
 const statusCodes = require('./statusCodes');
 const asrProvider = require('./asrProvider');
 const logger = require('./logger');
+const splitLogger = require('./splitLogger');
 const events = require('events');
 
 const IMAGE_EXTENSIONS = new Set([
@@ -763,6 +764,55 @@ module.exports = {
         let { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
         if (!Array.isArray(fileNames)) fileNames = [];
         const isSplitSeedTask = fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip');
+
+        const logSeed = (message, level = 'info') => {
+            if (!isSplitSeedTask) return;
+            const line = `[SPLIT-MERGE][${uuid}] ${message}`;
+            splitLogger.append(line);
+            if (typeof logger[level] === 'function') {
+                logger[level](line);
+            } else {
+                logger.info(line);
+            }
+        };
+
+        const waitForNodeSlot = async (nodeObj, taskId) => {
+            const MAX_WAIT_MS = 30 * 60 * 1000;
+            const POLL_INTERVAL_MS = 5000;
+            const start = Date.now();
+
+            while (nodeObj && nodeObj.availableSlots() === 0) {
+                if ((Date.now() - start) > MAX_WAIT_MS) {
+                    throw new Error(`[SPLIT-MERGE] Timeout waiting for available slot on ${nodeObj} for task ${taskId}`);
+                }
+                const queueCount = nodeObj.getInfoProperty('taskQueueCount', 0);
+                const maxParallel = nodeObj.getInfoProperty('maxParallelTasks', 0);
+                logger.info(`[SPLIT-MERGE][${taskId}] Waiting for slot on ${nodeObj} (queue=${queueCount}/${maxParallel})`);
+                if (isSplitSeedTask) {
+                    logSeed(`Waiting for slot on ${nodeObj} (queue=${queueCount}/${maxParallel})`);
+                }
+                await utils.sleep(POLL_INTERVAL_MS);
+                try {
+                    await nodeObj.updateInfo();
+                } catch (err) {
+                    logger.warn(`[SPLIT-MERGE] Failed to refresh ${nodeObj}: ${err.message}`);
+                }
+                const refreshedQueue = nodeObj.getInfoProperty('taskQueueCount', queueCount);
+                const refreshedMax = nodeObj.getInfoProperty('maxParallelTasks', maxParallel);
+                logger.debug(`[SPLIT-MERGE][${taskId}] Post-refresh ${nodeObj}: queue=${refreshedQueue}/${refreshedMax}`);
+            }
+            if (nodeObj) {
+                logger.info(`[SPLIT-MERGE][${taskId}] Slot available on ${nodeObj}, resuming upload`);
+                if (isSplitSeedTask) logSeed(`Slot available on ${nodeObj}, resuming upload`);
+            }
+        };
+
+        if (isSplitSeedTask) {
+            logSeed(`Seed task detected with ${fileNames.length} files`);
+        }
+                }
+            }
+        };
         const pathImport = params.import_path || null;
         
         // Initialize global directory tracking if not exists
@@ -1090,7 +1140,7 @@ module.exports = {
                 const TapisNode = require('./classes/TapisNode');
                 if (!(node instanceof TapisNode)) {
                     if (isSplitSeedTask) {
-                        logger.info(`[SPLIT-MERGE] Preserving ${tmpPath} for seed task ${uuid} after error (will rely on cleanupTemporaryDirectory)`);
+                        logSeed(`Preserving ${tmpPath} after error (cleanupTemporaryDirectory will handle it)`);
                     } else {
                         utils.rmdir(tmpPath);
                     }
@@ -1109,6 +1159,7 @@ module.exports = {
                         const translated = translateImportPathForNode(pathImport, node.nodeData && node.nodeData.hostname ? node.nodeData.hostname : (node.hostname || null));
                         if (translated) {
                             logger.info(`[TAPIS DEBUG] Forwarding path-based task ${uuid} to node ${node} using import_path ${translated}`);
+                            if (isSplitSeedTask) logSeed(`Forwarding via import_path ${translated} to ${node}`);
                             await forwardPathToNode(node, translated);
 
                             // Register routing and cleanup similar to upload flow
@@ -1124,9 +1175,11 @@ module.exports = {
                             return;
                         } else {
                             logger.warn(`[TAPIS DEBUG] No mapping found for import_path ${pathImport} on node ${node}, falling back to upload`);
+                            if (isSplitSeedTask) logSeed(`No mapping for import_path ${pathImport}, using upload path`);
                         }
                     } catch (e) {
                         logger.error(`[TAPIS DEBUG] Failed forwarding path-based task to node ${node}: ${e.message}`);
+                        if (isSplitSeedTask) logSeed(`Import_path forwarding failed: ${e.message}`);
                         // Allow fallback to upload below (the outer retry logic will handle failures)
                     }
                 }
@@ -1235,6 +1288,10 @@ module.exports = {
                         throw submitError;
                     }
                 } else {
+                    if (!autoscale && node.availableSlots() === 0) {
+                        logSeed(`Node ${node} full, waiting before upload`);
+                        await waitForNodeSlot(node, uuid);
+                    }
                     // Regular node processing
                     await doUpload();
                     eventEmitter.emit('close');
@@ -1243,10 +1300,9 @@ module.exports = {
                     await tasktable.delete(uuid);
 
                     if (isSplitSeedTask) {
-                        logger.info(`[SPLIT-MERGE] Preserving ${tmpPath} for seed task ${uuid} to allow potential reroute`);
-                    } else {
-                        utils.rmdir(tmpPath);
+                        logSeed('Upload complete, cleaning preserved tmpPath');
                     }
+                    utils.rmdir(tmpPath);
                 }
                 
                 // Clean up global directory tracking
