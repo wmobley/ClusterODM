@@ -810,9 +810,6 @@ module.exports = {
         if (isSplitSeedTask) {
             logSeed(`Seed task detected with ${fileNames.length} files`);
         }
-                }
-            }
-        };
         const pathImport = params.import_path || null;
         
         // Initialize global directory tracking if not exists
