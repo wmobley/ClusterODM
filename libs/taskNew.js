@@ -872,6 +872,9 @@ module.exports = {
         if (!approved) throw new Error(error);
 
         let node = await nodes.findBestAvailableNode(imagesCount, true);
+        if (isSplitSeedTask) {
+            logSeed(`Best available node selected: ${node ? node.toString() : 'none'}`);
+        }
         
         // Do we need to / can we create a new node via autoscaling?
         const autoscaleImagesCount = imagesCount > 0 ? imagesCount : fileNames.length;
@@ -1008,6 +1011,7 @@ module.exports = {
             };
 
             const taskNewInit = async () => {
+                if (isSplitSeedTask) logSeed(`Calling /task/new/init on ${node}`);
                 return new Promise((resolve, reject) => {
                     const body = [];
                     body.push({
@@ -1057,6 +1061,7 @@ module.exports = {
             };
 
             const taskNewUpload = async () => {
+                if (isSplitSeedTask) logSeed(`Uploading chunks to ${node}`);
                 return new Promise((resolve, reject) => {
                     const MAX_RETRIES = 5;
 
@@ -1094,6 +1099,7 @@ module.exports = {
             };
 
             const taskNewCommit = async () => {
+                if (isSplitSeedTask) logSeed(`Committing task on ${node}`);
                 return new Promise((resolve, reject) => {
                     const curl = curlInstance(resolve, reject, `${node.proxyTargetUrl()}/task/new/commit/${uuid}?token=${node.getToken()}`);
                     curl.perform();
@@ -1263,6 +1269,7 @@ module.exports = {
                 // Check if this is a Tapis node
                 const TapisNode = require('./classes/TapisNode');
                 if (node instanceof TapisNode) {
+                    if (isSplitSeedTask) logSeed(`Submitting to TAPIS node ${node}`);
                     // For Tapis nodes, submit job instead of uploading files
                     await node.setCurrentTask(uuid);
                     
@@ -1289,6 +1296,7 @@ module.exports = {
                         logSeed(`Node ${node} full, waiting before upload`);
                         await waitForNodeSlot(node, uuid);
                     }
+                    if (isSplitSeedTask) logSeed(`Starting upload to node ${node}`);
                     // Regular node processing
                     await doUpload();
                     eventEmitter.emit('close');
@@ -1300,6 +1308,7 @@ module.exports = {
                         logSeed('Upload complete, cleaning preserved tmpPath');
                     }
                     utils.rmdir(tmpPath);
+                    if (isSplitSeedTask) logSeed(`Routing established to node ${node}`);
                 }
                 
                 // Clean up global directory tracking
