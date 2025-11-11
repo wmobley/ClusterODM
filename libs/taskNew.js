@@ -619,12 +619,13 @@ module.exports = {
                     }
                 }
 
-                // Fallback heuristic ensures at least two submodels
+                // Fallback heuristic aims for ~75 images per submodel
                 let splitNumeric;
+                const DEFAULT_SPLIT_TARGET = 75;
                 if (desiredSubmodels && desiredSubmodels > 1) {
                     splitNumeric = Math.ceil(imagesCount / desiredSubmodels);
                 } else {
-                    splitNumeric = Math.ceil(imagesCount / 2);
+                    splitNumeric = DEFAULT_SPLIT_TARGET;
                 }
 
                 const MIN_SPLIT_SIZE = 30;

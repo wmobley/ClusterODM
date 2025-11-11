@@ -895,6 +895,9 @@ module.exports = {
             logger.info(`[TAPIS DEBUG] Processing pending task, creating task now`);
             logger.info(`[TAPIS DEBUG] Pending task data: ${JSON.stringify(Object.keys(pendingTask))}`);
 
+            // Remove immediately to avoid duplicate deliveries when multiple nodes register concurrently
+            provider.pendingTasks.delete(tapisJobUuid);
+
             // Register the node first
             const node = nodes.addUnique(hostname, port, token);
             if (node) {
@@ -1012,11 +1015,10 @@ module.exports = {
                     }
                   }
 
-                  // Remove from pending tasks
-                  provider.pendingTasks.delete(tapisJobUuid);
-
                 } catch (e) {
                   logger.error(`Failed to submit task to registered NodeODM: ${e.message}`);
+                  // Re-queue pending task so another node can attempt it
+                  provider.pendingTasks.set(tapisJobUuid, pendingTask);
                 }
               }, 2000); // Give the node time to fully start
 
