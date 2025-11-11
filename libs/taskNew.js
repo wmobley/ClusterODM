@@ -762,6 +762,7 @@ module.exports = {
         const tmpPath = path.join("tmp", uuid);
         let { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
         if (!Array.isArray(fileNames)) fileNames = [];
+        const isSplitSeedTask = fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip');
         const pathImport = params.import_path || null;
         
         // Initialize global directory tracking if not exists
@@ -1088,7 +1089,11 @@ module.exports = {
                 // Tapis nodes handle their own cleanup after upload retries complete
                 const TapisNode = require('./classes/TapisNode');
                 if (!(node instanceof TapisNode)) {
-                    utils.rmdir(tmpPath);
+                    if (isSplitSeedTask) {
+                        logger.info(`[SPLIT-MERGE] Preserving ${tmpPath} for seed task ${uuid} after error (will rely on cleanupTemporaryDirectory)`);
+                    } else {
+                        utils.rmdir(tmpPath);
+                    }
                 }
                 
                 eventEmitter.emit('close');
@@ -1237,7 +1242,11 @@ module.exports = {
                     await routetable.add(uuid, node, token);
                     await tasktable.delete(uuid);
 
-                    utils.rmdir(tmpPath);
+                    if (isSplitSeedTask) {
+                        logger.info(`[SPLIT-MERGE] Preserving ${tmpPath} for seed task ${uuid} to allow potential reroute`);
+                    } else {
+                        utils.rmdir(tmpPath);
+                    }
                 }
                 
                 // Clean up global directory tracking
