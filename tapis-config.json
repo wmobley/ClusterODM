@@ -44,7 +44,7 @@
       "coresPerNode": 64,
       "maxConcurrency": 64,
       "memoryMB": 30720,
-      "maxJobTime": "12:00:00"
+      "maxJobTime": "02:00:00"
     }
   ]
 }
