@@ -669,8 +669,13 @@ module.exports = {
                 odmOptions.push({name: 'sm-cluster', value: clusterUrl });
             }
 
-            if (!foundToken && config.token && config.token.length > 0){
-                odmOptions.push({ name: 'token', value: config.token });
+            if (!foundToken){
+                if (config.token && config.token.length > 0){
+                    odmOptions.push({ name: 'token', value: config.token });
+                } else if (token && typeof token === 'string' && token.length > 0){
+                    logger.info(`[TAPIS DEBUG] No ClusterODM static token configured; propagating request token for split-merge auth (${token.substring(0, 8)}...)`);
+                    odmOptions.push({ name: 'token', value: token });
+                }
             }
         }else{
             // Make sure the "sm-cluster" parameter is removed
