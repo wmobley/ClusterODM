@@ -41,14 +41,17 @@ stop_clusterodm() {
     fi
 }
 
+TMP_DIR_ARG="${TMP_DIR:-/corral/clusterodm/tmp}"
+
 start_clusterodm() {
-    echo "Starting ClusterODM-Tapis on port ${PORT} (admin web ${ADMIN_WEB_PORT})"
+    echo "Starting ClusterODM-Tapis on port ${PORT} (admin web ${ADMIN_WEB_PORT}), tmp dir ${TMP_DIR_ARG}"
     node index.js \
         --asr "${ASR_CONFIG}" \
         --config "${NODE_CONFIG}" \
         --port "${PORT}" \
         --admin-web-port "${ADMIN_WEB_PORT}" \
         --allow-local-download-bypass true \
+        --tmp-dir "${TMP_DIR_ARG}" \
         > "${LOG_FILE}" 2>&1 &
 
     echo $! > "${PID_FILE}"
