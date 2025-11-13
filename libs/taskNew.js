@@ -34,15 +34,39 @@ const events = require('events');
 
 const TMP_ROOT = utils.tmpRoot ? utils.tmpRoot() : path.join(process.cwd(), 'tmp');
 
-const PRESERVE_SEED_TMP = (() => {
-    const envValue = process.env.CLUSTERODM_PRESERVE_SEED_TMP;
+const parseBoolEnv = (envName) => {
+    const envValue = process.env[envName];
     if (!envValue) return false;
     const normalized = envValue.toString().trim().toLowerCase();
     return normalized.length > 0 && normalized !== '0' && normalized !== 'false' && normalized !== 'no';
-})();
+};
+
+const PRESERVE_SEED_TMP = parseBoolEnv('CLUSTERODM_PRESERVE_SEED_TMP');
+const PRESERVE_ALL_TMP = parseBoolEnv('CLUSTERODM_PRESERVE_UPLOADS');
+
+const shouldPreserveTmp = (isSplitSeedTask) => {
+    if (PRESERVE_ALL_TMP) return true;
+    if (isSplitSeedTask && PRESERVE_SEED_TMP) return true;
+    return false;
+};
+
+const maybePreserveTmp = (tmpPath, isSplitSeedTask, logFn) => {
+    if (shouldPreserveTmp(isSplitSeedTask)){
+        if (typeof logFn === 'function'){
+            logFn(`Preserving tmpPath at ${tmpPath} (CLUSTERODM_PRESERVE_UPLOADS=${PRESERVE_ALL_TMP}, CLUSTERODM_PRESERVE_SEED_TMP=${PRESERVE_SEED_TMP})`);
+        }else{
+            logger.info(`[CLUSTERODM] Preserving tmpPath ${tmpPath} for debugging`);
+        }
+        return true;
+    }
+    return false;
+};
 
 if (PRESERVE_SEED_TMP){
     logger.info('[SPLIT-MERGE] CLUSTERODM_PRESERVE_SEED_TMP enabled - split seed tmp directories will be preserved after upload');
+}
+if (PRESERVE_ALL_TMP){
+    logger.info('[CLUSTERODM] CLUSTERODM_PRESERVE_UPLOADS enabled - preserving all uploaded tmp directories');
 }
 
 const IMAGE_EXTENSIONS = new Set([
@@ -214,7 +238,9 @@ module.exports = {
                     return;
                 }
                 responseSent = true;
-                utils.rmdir(tmpPath);
+                if (!maybePreserveTmp(tmpPath, false)) {
+                    utils.rmdir(tmpPath);
+                }
                 utils.json(res, {error: err});
                 asrProvider.cleanup(uuid);
             },
@@ -1172,7 +1198,8 @@ module.exports = {
                 if (!(node instanceof TapisNode)) {
                     if (isSplitSeedTask) {
                         logSeed(`Preserving ${tmpPath} after error (cleanupTemporaryDirectory will handle it)`);
-                    } else {
+                    }
+                    if (!maybePreserveTmp(tmpPath, isSplitSeedTask)) {
                         utils.rmdir(tmpPath);
                     }
                 }
@@ -1196,7 +1223,9 @@ module.exports = {
                             // Register routing and cleanup similar to upload flow
                             await routetable.add(uuid, node, token);
                             await tasktable.delete(uuid);
-                            try { utils.rmdir(tmpPath); } catch(e){}
+                            if (!maybePreserveTmp(tmpPath, isSplitSeedTask)) {
+                                try { utils.rmdir(tmpPath); } catch(e){}
+                            }
 
                             if (global.taskProcessingDirs) {
                                 global.taskProcessingDirs.delete(tmpPath);
@@ -1332,24 +1361,26 @@ module.exports = {
                     await routetable.add(uuid, node, token);
                     await tasktable.delete(uuid);
 
-                    if (isSplitSeedTask) {
-                        try {
-                            const tmpEntries = fs.existsSync(tmpPath) ? fs.readdirSync(tmpPath) : [];
-                            logSeed(`Upload complete, tmpPath contains: ${tmpEntries.length ? tmpEntries.join(', ') : '[empty]'}`);
-                        } catch (listErr) {
-                            logSeed(`Could not list ${tmpPath} before cleanup: ${listErr.message}`, 'warn');
-                        }
-                        if (PRESERVE_SEED_TMP) {
-                            logSeed(`Preserving tmpPath at ${tmpPath} (CLUSTERODM_PRESERVE_SEED_TMP set)`);
+                    const logTmp = (message, level = 'info') => {
+                        if (isSplitSeedTask) {
+                            logSeed(message, level);
+                        } else if (typeof logger[level] === 'function') {
+                            logger[level](`[TASK ${uuid}] ${message}`);
                         } else {
-                            logSeed('Cleaning preserved tmpPath');
+                            logger.info(`[TASK ${uuid}] ${message}`);
                         }
+                    };
+
+                    try {
+                        const tmpEntries = fs.existsSync(tmpPath) ? fs.readdirSync(tmpPath) : [];
+                        logTmp(`Upload complete, tmpPath contains: ${tmpEntries.length ? tmpEntries.join(', ') : '[empty]'}`);
+                    } catch (listErr) {
+                        logTmp(`Could not list ${tmpPath} before cleanup: ${listErr.message}`, 'warn');
                     }
 
-                    if (!PRESERVE_SEED_TMP || !isSplitSeedTask){
+                    const preserved = maybePreserveTmp(tmpPath, isSplitSeedTask, logTmp);
+                    if (!preserved) {
                         utils.rmdir(tmpPath);
-                    }else{
-                        logger.info(`[SPLIT-MERGE][${uuid}] Skipping tmpPath cleanup (preserved for debugging)`);
                     }
 
                     if (isSplitSeedTask) logSeed(`Routing established to node ${node}`);
