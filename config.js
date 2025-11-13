@@ -37,7 +37,7 @@ let argDefs = {
             'upload-max-speed', 'ssl-key', 'ssl-cert', 'secure-port',
             'public-address', 'config', 'admin-session-secret',
             'asr', 'registration-secret', 'webodm-base-url',
-            'admin-web-allowed-tenants', 'admin-web-allowed-users'],
+            'admin-web-allowed-tenants', 'admin-web-allowed-users', 'tmp-dir'],
     boolean: ['splitmerge', 'debug', 'allow-local-download-bypass', 'force-node-downloads', 'webodm-require-staff', 'admin-web-use-tapis-jwt'],
     alias: {
         p: 'port',
@@ -151,6 +151,10 @@ const mergeWebodmConfig = () => {
 };
 
 config.webodm = mergeWebodmConfig();
+
+if (!config.tmp_dir || config.tmp_dir.length === 0){
+    config.tmp_dir = 'tmp';
+}
 
 const parseList = (value) => {
     if (!value) return [];

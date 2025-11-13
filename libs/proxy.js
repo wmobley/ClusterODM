@@ -40,6 +40,8 @@ const floodMonitor = require('./floodMonitor');
 const concurrencyMonitor = require('./concurrencyMonitor');
 const AWS = require('aws-sdk');
 
+const TMP_ROOT = utils.tmpRoot ? utils.tmpRoot() : path.join(process.cwd(), 'tmp');
+
 module.exports = {
     initialize: async function(cloudProvider){
         utils.cleanupTemporaryDirectory(config.stale_uploads_timeout);
@@ -731,7 +733,7 @@ module.exports = {
 
                     const taskId = taskNew.getTaskIdFromPath(pathname);
                     if (taskId){
-                        const saveFilesToDir = path.join('tmp', taskId);
+                        const saveFilesToDir = path.join(TMP_ROOT, taskId);
                         async.series([
                             cb => {
                                 fs.exists(saveFilesToDir, exists => {
@@ -774,7 +776,7 @@ module.exports = {
                 }else if (req.method === 'POST' && pathname.indexOf('/task/new/commit') === 0){
                     const taskId = taskNew.getTaskIdFromPath(pathname);
                     if (taskId){
-                        const tmpPath = path.join('tmp', taskId);
+                        const tmpPath = path.join(TMP_ROOT, taskId);
                         const bodyFile = path.join(tmpPath, 'body.json');
                         const die = (err) => {
                             utils.rmdir(tmpPath);

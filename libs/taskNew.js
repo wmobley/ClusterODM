@@ -32,6 +32,19 @@ const logger = require('./logger');
 const splitLogger = require('./splitLogger');
 const events = require('events');
 
+const TMP_ROOT = utils.tmpRoot ? utils.tmpRoot() : path.join(process.cwd(), 'tmp');
+
+const PRESERVE_SEED_TMP = (() => {
+    const envValue = process.env.CLUSTERODM_PRESERVE_SEED_TMP;
+    if (!envValue) return false;
+    const normalized = envValue.toString().trim().toLowerCase();
+    return normalized.length > 0 && normalized !== '0' && normalized !== 'false' && normalized !== 'no';
+})();
+
+if (PRESERVE_SEED_TMP){
+    logger.info('[SPLIT-MERGE] CLUSTERODM_PRESERVE_SEED_TMP enabled - split seed tmp directories will be preserved after upload');
+}
+
 const IMAGE_EXTENSIONS = new Set([
     '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.pgm', '.gif'
 ]);
@@ -185,7 +198,7 @@ module.exports = {
     createContext: async function(req, res){
         let uuid = await getUuid(req);
 
-        const tmpPath = path.join('tmp', uuid);
+        const tmpPath = path.join(TMP_ROOT, uuid);
 
         if (!fs.existsSync(tmpPath)) fs.mkdirSync(tmpPath);
 
@@ -1320,9 +1333,25 @@ module.exports = {
                     await tasktable.delete(uuid);
 
                     if (isSplitSeedTask) {
-                        logSeed('Upload complete, cleaning preserved tmpPath');
+                        try {
+                            const tmpEntries = fs.existsSync(tmpPath) ? fs.readdirSync(tmpPath) : [];
+                            logSeed(`Upload complete, tmpPath contains: ${tmpEntries.length ? tmpEntries.join(', ') : '[empty]'}`);
+                        } catch (listErr) {
+                            logSeed(`Could not list ${tmpPath} before cleanup: ${listErr.message}`, 'warn');
+                        }
+                        if (PRESERVE_SEED_TMP) {
+                            logSeed(`Preserving tmpPath at ${tmpPath} (CLUSTERODM_PRESERVE_SEED_TMP set)`);
+                        } else {
+                            logSeed('Cleaning preserved tmpPath');
+                        }
                     }
-                    utils.rmdir(tmpPath);
+
+                    if (!PRESERVE_SEED_TMP || !isSplitSeedTask){
+                        utils.rmdir(tmpPath);
+                    }else{
+                        logger.info(`[SPLIT-MERGE][${uuid}] Skipping tmpPath cleanup (preserved for debugging)`);
+                    }
+
                     if (isSplitSeedTask) logSeed(`Routing established to node ${node}`);
                 }
                 

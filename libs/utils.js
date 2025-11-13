@@ -26,6 +26,20 @@ const rimraf = require('rimraf');
 const child_process = require('child_process');
 const os = require('os');
 const path = require('path');
+const config = require('../config');
+
+const resolveTmpRoot = () => {
+    const dir = config.tmp_dir && config.tmp_dir.length ? config.tmp_dir : 'tmp';
+    if (path.isAbsolute(dir)) return dir;
+    return path.join(process.cwd(), dir);
+};
+
+const TMP_ROOT = resolveTmpRoot();
+try{
+    fs.mkdirSync(TMP_ROOT, { recursive: true });
+}catch(e){
+    logger.warn(`Cannot create tmp root ${TMP_ROOT}: ${e.message}`);
+}
 
 const tmpUploadsMap = {}; // tmp dir entries --> number of files
 
@@ -45,8 +59,12 @@ module.exports = {
 		return defaultValue;
     },
     
+    tmpRoot: function(){
+        return TMP_ROOT;
+    },
+
     temporaryFilePath: function(){
-        return path.join('tmp', uuidv4());
+        return path.join(TMP_ROOT, uuidv4());
     },
 
     uuidv4: function(){
@@ -66,14 +84,14 @@ module.exports = {
         logger.info(`[TAPIS DEBUG] cleanupTemporaryDirectory called with timeout: ${staleUploadsTimeout}`);
 
         return new Promise((resolve, reject) => {
-            fs.readdir('tmp', async (err, entries) => {
+            fs.readdir(TMP_ROOT, async (err, entries) => {
                 if (err) reject(err);
                 else{
                     for (let entry of entries){
                         if (entry === '.gitignore') continue;
 
                         let stale = false;
-                        let tmpPath = path.join('tmp', entry);
+                        let tmpPath = path.join(TMP_ROOT, entry);
                         logger.info(`[TAPIS DEBUG] Checking directory for cleanup: ${tmpPath}`);
 
                         if (staleUploadsTimeout > 0){
