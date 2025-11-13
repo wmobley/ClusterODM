@@ -565,6 +565,7 @@ module.exports = {
         let autoSplitValue = null;
         let autoUseExifApplied = false;
         let autoRerunFromApplied = false;
+        let foundTokenValue = null;
 
         if (config.splitmerge){
             // We automatically set the "sm-cluster" parameter
@@ -585,6 +586,7 @@ module.exports = {
                     odmOptions.push({name: to.name, value: clusterUrl});
                 }else if (to.name === 'token'){
                     foundToken = true;
+                    foundTokenValue = to.value;
                     odmOptions.push({name: to.name, value: to.value});
                 }else if (to.name === 'use-exif'){
                     foundUseExif = true;
@@ -669,12 +671,20 @@ module.exports = {
                 odmOptions.push({name: 'sm-cluster', value: clusterUrl });
             }
 
-            if (!foundToken){
-                if (config.token && config.token.length > 0){
-                    odmOptions.push({ name: 'token', value: config.token });
-                } else if (token && typeof token === 'string' && token.length > 0){
-                    logger.info(`[TAPIS DEBUG] No ClusterODM static token configured; propagating request token for split-merge auth (${token.substring(0, 8)}...)`);
-                    odmOptions.push({ name: 'token', value: token });
+            const normalizedTokenValue = typeof foundTokenValue === 'string' ? foundTokenValue.trim() : foundTokenValue;
+            if (!normalizedTokenValue){
+                const sourceToken = (config.token && config.token.length > 0) ? config.token :
+                                    (token && typeof token === 'string' && token.length > 0 ? token : null);
+                if (sourceToken){
+                    if (config.token && config.token.length > 0){
+                        logger.info(`[TAPIS DEBUG] Injecting ClusterODM static token into split-merge options`);
+                    }else{
+                        logger.info(`[TAPIS DEBUG] No ClusterODM static token configured; propagating request token for split-merge auth (${sourceToken.substring(0, 8)}...)`);
+                    }
+                    odmOptions = odmOptions.filter(opt => opt.name !== 'token');
+                    odmOptions.push({ name: 'token', value: sourceToken });
+                }else{
+                    logger.warn(`[TAPIS DEBUG] Split-merge request missing authentication token; downstream sm-cluster calls may fail`);
                 }
             }
         }else{
