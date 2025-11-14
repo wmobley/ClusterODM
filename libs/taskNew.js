@@ -223,8 +223,20 @@ module.exports = {
         let uuid = await getUuid(req);
 
         const tmpPath = path.join(TMP_ROOT, uuid);
+        const curlLogPath = path.join(tmpPath, 'curl.log');
+        let curlLogStream = null;
 
         if (!fs.existsSync(tmpPath)) fs.mkdirSync(tmpPath);
+        const appendCurlLog = (line) => {
+            try{
+                if (!curlLogStream){
+                    curlLogStream = fs.createWriteStream(curlLogPath, { flags: 'a' });
+                }
+                curlLogStream.write(`${(new Date()).toISOString()} ${line}\n`);
+            }catch(e){
+                logger.warn(`[TAPIS DEBUG] Unable to write curl log ${curlLogPath}: ${e.message}`);
+            }
+        };
 
         // Track if response has been sent to prevent double responses
         let responseSent = false;
@@ -981,11 +993,29 @@ module.exports = {
 
             const eventEmitter = new events.EventEmitter();
             eventEmitter.setMaxListeners(2 * (2 + PARALLEL_UPLOADS + 1));
+            eventEmitter.on('close', () => {
+                if (curlLogStream){
+                    try{
+                        curlLogStream.end();
+                    }catch(e){
+                        logger.warn(`[TAPIS DEBUG] Unable to close curl log ${curlLogPath}: ${e.message}`);
+                    }
+                    curlLogStream = null;
+                }
+            });
 
             const curlInstance = (done, onError, url, body, validate) => {
                 // We use CURL, because NodeJS libraries are buggy
                 const curl = new Curl(),
                       close = curl.close.bind(curl);
+                const startedAt = Date.now();
+                const describeBody = (parts = []) => {
+                    return parts.map(part => {
+                        if (part && part.file) return `file:${path.basename(part.file)}`;
+                        if (part && part.name) return `field:${part.name}`;
+                        return 'part';
+                    }).join(', ');
+                };
                 
                 const tryClose = () => {
                     try{
@@ -1007,8 +1037,10 @@ module.exports = {
                             if (body.error) throw new Error(body.error);
                             if (validate !== undefined) validate(body);
 
+                            appendCurlLog(`RESPONSE status=${statusCode} url=${url} duration=${Date.now() - startedAt}ms`);
                             done();
                         }else{
+                            appendCurlLog(`RESPONSE status=${statusCode} url=${url} duration=${Date.now() - startedAt}ms body=${body}`);
                             throw new Error(`POST ${url} statusCode is ${statusCode}, expected 200`);
                         }
                     }catch(e){
@@ -1016,10 +1048,12 @@ module.exports = {
                     }
                 });
 
-                curl.on('error', onError);
+                curl.on('error', (err) => {
+                    appendCurlLog(`ERROR url=${url} duration=${Date.now() - startedAt}ms message=${err.message}`);
+                    onError(err);
+                });
 
-                // logger.info(`Curl URL: ${url}`);
-                // logger.info(`Curl Body: ${JSON.stringify(body)}`);
+                appendCurlLog(`REQUEST url=${url} parts=[${describeBody(body)}]`);
 
                 curl.setOpt(Curl.option.URL, url);
                 curl.setOpt(Curl.option.HTTPPOST, body || []);
