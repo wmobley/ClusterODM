@@ -850,7 +850,8 @@ module.exports = {
     },
 
     process: async function(req, res, cloudProvider, uuid, params, token, limits, getLimitedOptions){
-        const tmpPath = path.join("tmp", uuid);
+        const ctx = await module.exports.createContext(req, res);
+        const tmpPath = ctx.tmpPath;
         let { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
         if (!Array.isArray(fileNames)) fileNames = [];
         const isSplitSeedTask = fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip');
