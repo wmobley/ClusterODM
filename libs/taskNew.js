@@ -224,7 +224,9 @@ module.exports = {
 
         const tmpPath = path.join(TMP_ROOT, uuid);
         const curlLogPath = path.join(tmpPath, 'curl.log');
+        const globalCurlLogPath = path.join(process.cwd(), 'curl.log');
         let curlLogStream = null;
+        let globalCurlLogStream = null;
 
         if (!fs.existsSync(tmpPath)) fs.mkdirSync(tmpPath);
         const appendCurlLog = (line) => {
@@ -233,6 +235,10 @@ module.exports = {
                     curlLogStream = fs.createWriteStream(curlLogPath, { flags: 'a' });
                 }
                 curlLogStream.write(`${(new Date()).toISOString()} ${line}\n`);
+                if (!globalCurlLogStream){
+                    globalCurlLogStream = fs.createWriteStream(globalCurlLogPath, { flags: 'a' });
+                }
+                globalCurlLogStream.write(`${(new Date()).toISOString()} [${uuid}] ${line}\n`);
             }catch(e){
                 logger.warn(`[TAPIS DEBUG] Unable to write curl log ${curlLogPath}: ${e.message}`);
             }
@@ -259,7 +265,25 @@ module.exports = {
             markResponseSent: () => {
                 responseSent = true;
             },
-            isResponseSent: () => responseSent
+            isResponseSent: () => responseSent,
+            closeCurlLogs: () => {
+                if (curlLogStream){
+                    try{
+                        curlLogStream.end();
+                    }catch(e){
+                        logger.warn(`[TAPIS DEBUG] Unable to close curl log ${curlLogPath}: ${e.message}`);
+                    }
+                    curlLogStream = null;
+                }
+                if (globalCurlLogStream){
+                    try{
+                        globalCurlLogStream.end();
+                    }catch(e){
+                        logger.warn(`[TAPIS DEBUG] Unable to close global curl log ${globalCurlLogPath}: ${e.message}`);
+                    }
+                    globalCurlLogStream = null;
+                }
+            }
         };
     },
 
@@ -994,14 +1018,7 @@ module.exports = {
             const eventEmitter = new events.EventEmitter();
             eventEmitter.setMaxListeners(2 * (2 + PARALLEL_UPLOADS + 1));
             eventEmitter.on('close', () => {
-                if (curlLogStream){
-                    try{
-                        curlLogStream.end();
-                    }catch(e){
-                        logger.warn(`[TAPIS DEBUG] Unable to close curl log ${curlLogPath}: ${e.message}`);
-                    }
-                    curlLogStream = null;
-                }
+                ctx.closeCurlLogs();
             });
 
             const curlInstance = (done, onError, url, body, validate) => {
