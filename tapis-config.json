@@ -31,8 +31,8 @@
       "jobCount": 1,
       "nodeCount": 1,
       "logicalQueue": "vm-small",
-      "coresPerNode": 64,
-      "maxConcurrency": 64,
+      "coresPerNode": 16,
+      "maxConcurrency": 16,
       "memoryMB": 30720,
       "maxJobTime": "04:00:00"
     },
