@@ -250,6 +250,8 @@ module.exports = {
         return {
             uuid, 
             tmpPath,
+            // Expose for downstream logging of curl requests/responses
+            appendCurlLog,
             die: (err) => {
                 if (responseSent) {
                     logger.warn(`[TAPIS DEBUG] Attempted to send response after already sent: ${err}`);
@@ -852,6 +854,7 @@ module.exports = {
     process: async function(req, res, cloudProvider, uuid, params, token, limits, getLimitedOptions){
         const ctx = await module.exports.createContext(req, res);
         const tmpPath = ctx.tmpPath;
+        const appendCurlLog = ctx.appendCurlLog || (() => {});
         let { options, taskName, skipPostProcessing, outputs, dateCreated, fileNames, imagesCount, webhook } = params;
         if (!Array.isArray(fileNames)) fileNames = [];
         const isSplitSeedTask = fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip');
