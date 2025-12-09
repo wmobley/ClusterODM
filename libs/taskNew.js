@@ -111,6 +111,20 @@ const getUuid = async (req) => {
         }
     }
 
+    // Fallback: extract UUID from request URL (e.g., /task/new/commit/:uuid)
+    if (req && req.url) {
+        const match = req.url.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i);
+        if (match && match[1]) {
+            const urlUuid = match[1];
+            const tmpDir = path.join(TMP_ROOT, urlUuid);
+
+            // Prefer the URL UUID when a matching temp directory already exists
+            if (fs.existsSync(tmpDir)) {
+                return urlUuid;
+            }
+        }
+    }
+
     return utils.uuidv4();
 };
 
