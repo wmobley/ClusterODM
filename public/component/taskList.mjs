@@ -81,6 +81,37 @@ const formatTimestamp = (timestamp) => {
   }
 };
 
+const formatDetails = (task) => {
+  if (task?.error) {
+    return html`<div class="text-danger small" title=${task.error}>${task.error}</div>`;
+  }
+
+  if (!task?.taskInfo) {
+    return html`<div class="text-muted small">No task info returned from node.</div>`;
+  }
+
+  const info = task.taskInfo;
+  const status = info.status || (info.code ? info.code : null);
+  const exitCode = info.exitCode ?? info.exit_code ?? info.return_code;
+
+  return html`<div class="small">
+    ${status ? html`<div>Status: ${status}</div>` : html``}
+    ${exitCode !== undefined ? html`<div>Exit code: ${exitCode}</div>` : html``}
+  </div>`;
+};
+
+const buildNodeTaskInfoUrl = (task) => {
+  if (!task?.node) return null;
+  const { hostname, port, token } = task.node;
+  if (!hostname || !port) return null;
+  const proto = Number(port) === 443 ? "https" : "http";
+  const defaultPort = proto === "https" ? 443 : 80;
+  const portSegment = Number(port) !== defaultPort ? `:${port}` : "";
+  const base = `${proto}://${hostname}${portSegment}`;
+  const params = token ? `?token=${encodeURIComponent(token)}` : "";
+  return `${base}/task/${encodeURIComponent(task.uuid)}/info${params}`;
+};
+
 const renderLinks = (task, onDelete, deleteState = {}) => {
   const token = task.token;
   const node = task.node;
@@ -91,6 +122,7 @@ const renderLinks = (task, onDelete, deleteState = {}) => {
   const taskOutputUrl = token
     ? buildClusterUrl(`/task/${encodeURIComponent(task.uuid)}/output`, token, { line: 0 })
     : null;
+  const nodeTaskInfoUrl = buildNodeTaskInfoUrl(task);
 
   const isDeleting = deleteState.loading;
   const deleteError = deleteState.error;
@@ -127,6 +159,15 @@ const renderLinks = (task, onDelete, deleteState = {}) => {
           target="_blank"
           rel="noopener noreferrer"
           >Task info</a
+        >`
+      : html``}
+    ${nodeTaskInfoUrl
+      ? html`<a
+          class="btn btn-sm btn-outline-secondary"
+          href=${nodeTaskInfoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          >Node task info</a
         >`
       : html``}
     ${onDelete
@@ -209,6 +250,7 @@ export const TaskList = ({ tasks = [], refreshTasks }) => {
               <th>Token</th>
               <th>Node</th>
               <th>Status</th>
+              <th>Details</th>
               <th>Last Activity</th>
               <th>Actions</th>
             </tr>
@@ -238,6 +280,7 @@ export const TaskList = ({ tasks = [], refreshTasks }) => {
                     : html`<span class="text-muted">Unassigned</span>`}
                 </td>
                 <td>${formatStatus(task)}</td>
+                <td>${formatDetails(task)}</td>
                 <td>${formatTimestamp(task.accessed)}</td>
                 <td>${renderLinks(task, () => handleDelete(task), deleteState)}</td>
               </tr>`;
