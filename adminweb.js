@@ -378,7 +378,14 @@ module.exports = {
       try {
         const routeEntries = (await routetable.findByNode()) || {};
         const summaries = await tasktable.listSummaries();
-        const provider = includeDebug ? asrProvider.get() : null;
+        let provider = null;
+        if (includeDebug) {
+          try {
+            provider = asrProvider.get();
+          } catch (providerErr) {
+            logger.warn(`Failed to retrieve ASR provider for task list debug info: ${providerErr.message}`);
+          }
+        }
         const pendingMap = new Map();
         for (const summary of summaries) {
           pendingMap.set(summary.uuid, summary);
@@ -437,16 +444,25 @@ module.exports = {
 
             if (includeDebug) {
               const isTapisNode = node && node.constructor && node.constructor.name === "TapisNode";
-              const pendingQueue =
-                provider && provider.pendingTasks && provider.pendingTasks.get
-                  ? provider.pendingTasks.get(uuid)
+              let pendingQueue = null;
+              if (provider && provider.pendingTasks && typeof provider.pendingTasks.get === "function") {
+                try {
+                  pendingQueue = provider.pendingTasks.get(uuid);
+                } catch (pendingErr) {
+                  logger.warn(`Failed to read pending queue entry for ${uuid}: ${pendingErr.message}`);
+                }
+              }
+
+              const pendingQueueSize =
+                provider && provider.pendingTasks && typeof provider.pendingTasks.size === "number"
+                  ? provider.pendingTasks.size
                   : null;
 
               summary.debug = {
                 foundInRouteTable: true,
                 foundInTaskTable: !!taskTableSummary,
                 foundInPendingQueue: !!pendingQueue,
-                pendingQueueSize: provider && provider.pendingTasks ? provider.pendingTasks.size : null,
+                pendingQueueSize,
                 routeAccessed: entry && entry.accessed ? entry.accessed : null,
                 taskTableAccessed: taskTableSummary && taskTableSummary.accessed ? taskTableSummary.accessed : null,
                 nodeType: node && node.constructor ? node.constructor.name : null,
@@ -469,11 +485,20 @@ module.exports = {
 
         // Add pending / tasktable-only entries
         for (const pending of pendingMap.values()) {
-          const pendingQueue =
-            includeDebug &&
-            provider &&
-            provider.pendingTasks &&
-            (provider.pendingTasks.get ? provider.pendingTasks.get(pending.uuid) : null);
+          let pendingQueue = null;
+          let pendingQueueSize = null;
+          if (includeDebug && provider && provider.pendingTasks) {
+            if (typeof provider.pendingTasks.get === "function") {
+              try {
+                pendingQueue = provider.pendingTasks.get(pending.uuid);
+              } catch (pendingErr) {
+                logger.warn(`Failed to read pending queue entry for ${pending.uuid}: ${pendingErr.message}`);
+              }
+            }
+            if (typeof provider.pendingTasks.size === "number") {
+              pendingQueueSize = provider.pendingTasks.size;
+            }
+          }
           tasks.push({
             source: "pending",
             uuid: pending.uuid,
@@ -486,7 +511,7 @@ module.exports = {
                   foundInRouteTable: false,
                   foundInTaskTable: true,
                   foundInPendingQueue: !!pendingQueue,
-                  pendingQueueSize: provider && provider.pendingTasks ? provider.pendingTasks.size : null,
+                  pendingQueueSize,
                   routeAccessed: null,
                   taskTableAccessed: pending.accessed || null,
                   nodeType: null,
