@@ -81,23 +81,73 @@ const formatTimestamp = (timestamp) => {
   }
 };
 
+const formatTimestampText = (timestamp) => {
+  if (!timestamp) return "-";
+  try {
+    return new Date(timestamp).toLocaleString();
+  } catch (e) {
+    return "-";
+  }
+};
+
 const formatDetails = (task) => {
   if (task?.error) {
     return html`<div class="text-danger small" title=${task.error}>${task.error}</div>`;
   }
 
-  if (!task?.taskInfo) {
-    return html`<div class="text-muted small">No task info returned from node.</div>`;
+  const lines = [];
+
+  if (task?.taskInfo) {
+    const info = task.taskInfo;
+    const status = info.status || (info.code ? info.code : null);
+    const exitCode = info.exitCode ?? info.exit_code ?? info.return_code;
+
+    if (status) lines.push(html`<div>Status: ${status}</div>`);
+    if (exitCode !== undefined) lines.push(html`<div>Exit code: ${exitCode}</div>`);
+  } else {
+    lines.push(html`<div class="text-muted">No task info returned from node.</div>`);
   }
 
-  const info = task.taskInfo;
-  const status = info.status || (info.code ? info.code : null);
-  const exitCode = info.exitCode ?? info.exit_code ?? info.return_code;
+  if (task?.debug) {
+    const dbg = task.debug;
+    const presence = [
+      `Route table: ${dbg.foundInRouteTable ? "yes" : "no"}${dbg.routeAccessed ? ` (seen ${formatTimestampText(dbg.routeAccessed)})` : ""}`,
+      `Task table: ${dbg.foundInTaskTable ? "yes" : "no"}${dbg.taskTableAccessed ? ` (seen ${formatTimestampText(dbg.taskTableAccessed)})` : ""}`,
+      dbg.pendingQueueSize !== null && dbg.pendingQueueSize !== undefined
+        ? `Pending queue: ${dbg.foundInPendingQueue ? "match" : "no match"} (size ${dbg.pendingQueueSize})`
+        : null,
+    ].filter(Boolean);
 
-  return html`<div class="small">
-    ${status ? html`<div>Status: ${status}</div>` : html``}
-    ${exitCode !== undefined ? html`<div>Exit code: ${exitCode}</div>` : html``}
-  </div>`;
+    const nodeBits = [];
+    if (dbg.nodeType) {
+      nodeBits.push(`Node type: ${dbg.nodeType}`);
+    }
+    if (dbg.nodeRegistered !== null && dbg.nodeRegistered !== undefined) {
+      nodeBits.push(`Node registered: ${dbg.nodeRegistered ? "yes" : "no"}`);
+    }
+    if (dbg.waitingForRegistration !== null && dbg.waitingForRegistration !== undefined) {
+      nodeBits.push(`Waiting for registration: ${dbg.waitingForRegistration ? "yes" : "no"}`);
+    }
+    if (dbg.tapisJobId) {
+      nodeBits.push(`Tapis job: ${dbg.tapisJobId}`);
+    } else if (dbg.tapisJobHandle) {
+      nodeBits.push(`Tapis handle: ${dbg.tapisJobHandle}`);
+    }
+    if (dbg.currentTask) {
+      nodeBits.push(`Node current task: ${dbg.currentTask}`);
+    }
+
+    lines.push(html`<div class="mt-1 text-muted">Presence: ${presence.join(" • ")}</div>`);
+    if (nodeBits.length) {
+      lines.push(html`<div class="text-muted">Node: ${nodeBits.join(" • ")}</div>`);
+    }
+  }
+
+  if (!lines.length) {
+    return html`<div class="text-muted small">No details available.</div>`;
+  }
+
+  return html`<div class="small">${lines}</div>`;
 };
 
 const buildNodeTaskInfoUrl = (task) => {

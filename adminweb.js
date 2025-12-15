@@ -373,10 +373,12 @@ module.exports = {
 
     app.get("/r/task/list", ensureAuth, async (req, res) => {
       const includeDetails = req.query.details === "true";
+      const includeDebug = includeDetails || req.query.debug === "true";
 
       try {
         const routeEntries = (await routetable.findByNode()) || {};
         const summaries = await tasktable.listSummaries();
+        const provider = includeDebug ? asrProvider.get() : null;
         const pendingMap = new Map();
         for (const summary of summaries) {
           pendingMap.set(summary.uuid, summary);
@@ -385,6 +387,7 @@ module.exports = {
         const tasks = await Promise.all(
           Object.entries(routeEntries).map(async ([uuid, entry]) => {
             const node = entry && entry.node ? entry.node : null;
+            const taskTableSummary = pendingMap.get(uuid) || null;
             const summary = {
               source: "route",
               uuid,
@@ -427,6 +430,38 @@ module.exports = {
               }
             }
 
+            if (taskTableSummary) {
+              summary.taskTable = taskTableSummary;
+              pendingMap.delete(uuid);
+            }
+
+            if (includeDebug) {
+              const isTapisNode = node && node.constructor && node.constructor.name === "TapisNode";
+              const pendingQueue =
+                provider && provider.pendingTasks && provider.pendingTasks.get
+                  ? provider.pendingTasks.get(uuid)
+                  : null;
+
+              summary.debug = {
+                foundInRouteTable: true,
+                foundInTaskTable: !!taskTableSummary,
+                foundInPendingQueue: !!pendingQueue,
+                pendingQueueSize: provider && provider.pendingTasks ? provider.pendingTasks.size : null,
+                routeAccessed: entry && entry.accessed ? entry.accessed : null,
+                taskTableAccessed: taskTableSummary && taskTableSummary.accessed ? taskTableSummary.accessed : null,
+                nodeType: node && node.constructor ? node.constructor.name : null,
+                nodeRegistered:
+                  isTapisNode && typeof node.nodeRegistered !== "undefined" ? !!node.nodeRegistered : null,
+                waitingForRegistration:
+                  isTapisNode && typeof node.waitingForRegistration !== "undefined"
+                    ? !!node.waitingForRegistration
+                    : null,
+                tapisJobId: isTapisNode ? node.tapisJobId || null : null,
+                tapisJobHandle: isTapisNode ? node.jobId || null : null,
+                currentTask: node && node.currentTask ? node.currentTask : null,
+              };
+            }
+
             pendingMap.delete(uuid);
             return summary;
           })
@@ -434,6 +469,11 @@ module.exports = {
 
         // Add pending / tasktable-only entries
         for (const pending of pendingMap.values()) {
+          const pendingQueue =
+            includeDebug &&
+            provider &&
+            provider.pendingTasks &&
+            (provider.pendingTasks.get ? provider.pendingTasks.get(pending.uuid) : null);
           tasks.push({
             source: "pending",
             uuid: pending.uuid,
@@ -441,6 +481,22 @@ module.exports = {
             accessed: pending.accessed,
             taskInfo: pending.taskInfo,
             outputLength: pending.outputLength,
+            debug: includeDebug
+              ? {
+                  foundInRouteTable: false,
+                  foundInTaskTable: true,
+                  foundInPendingQueue: !!pendingQueue,
+                  pendingQueueSize: provider && provider.pendingTasks ? provider.pendingTasks.size : null,
+                  routeAccessed: null,
+                  taskTableAccessed: pending.accessed || null,
+                  nodeType: null,
+                  nodeRegistered: null,
+                  waitingForRegistration: null,
+                  tapisJobId: null,
+                  tapisJobHandle: null,
+                  currentTask: null,
+                }
+              : undefined,
           });
         }
 
