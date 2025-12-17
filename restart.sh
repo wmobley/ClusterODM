@@ -23,6 +23,12 @@ if [[ ! -f "${NODE_CONFIG}" ]]; then
     exit 1
 fi
 
+if command -v 7z >/dev/null 2>&1; then
+    echo "7zip detected: $(command -v 7z)"
+else
+    echo "WARNING: 7zip not found. Install 7zip to enable seed.zip repair."
+fi
+
 # Allow overrides via environment variables, but fall back to defaults.
 PORT="${PORT:-3000}"
 ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-10000}"

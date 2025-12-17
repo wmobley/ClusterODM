@@ -209,6 +209,9 @@ const testSeedZip = async (seedPath, logFn) => {
         result = await runCommand('7z', ['t', seedPath]);
     }
     if (result.error) {
+        result = await runCommand('python3', ['-m', 'zipfile', '-t', seedPath]);
+    }
+    if (result.error) {
         const message = `Seed zip integrity test skipped (no unzip/7z available): ${result.error.message}`;
         if (typeof logFn === 'function') logFn(message, 'warn');
         else logger.warn(message);
@@ -226,14 +229,15 @@ const repairSeedZip = async (seedPath, tmpPath, uuid, logFn) => {
     const has7z = await commandExists('7z');
     const hasUnzip = await commandExists('unzip');
     const hasZip = await commandExists('zip');
-    if (!has7z && !hasUnzip) {
-        const message = `Seed zip repair skipped; no unzip/7z available for ${seedPath}`;
+    const hasPython = await commandExists('python3');
+    if (!has7z && !hasUnzip && !hasPython) {
+        const message = `Seed zip repair skipped; no unzip/7z/python3 available for ${seedPath}`;
         if (typeof logFn === 'function') logFn(message, 'warn');
         else logger.warn(message);
         return { ok: false, message };
     }
-    if (!has7z && !hasZip) {
-        const message = `Seed zip repair skipped; no zip/7z available to repackage ${seedPath}`;
+    if (!has7z && !hasZip && !hasPython) {
+        const message = `Seed zip repair skipped; no zip/7z/python3 available to repackage ${seedPath}`;
         if (typeof logFn === 'function') logFn(message, 'warn');
         else logger.warn(message);
         return { ok: false, message };
@@ -250,10 +254,18 @@ const repairSeedZip = async (seedPath, tmpPath, uuid, logFn) => {
             else logger.warn(message);
             return { ok: false, message };
         }
-    } else {
+    } else if (hasUnzip) {
         const extract = await runCommand('unzip', ['-o', seedPath, '-d', repairDir]);
         if (extract.code !== 0) {
             const message = `Seed zip repair failed during unzip extract (exit ${extract.code})`;
+            if (typeof logFn === 'function') logFn(message, 'warn');
+            else logger.warn(message);
+            return { ok: false, message };
+        }
+    } else if (hasPython) {
+        const extract = await runCommand('python3', ['-m', 'zipfile', '-e', seedPath, repairDir]);
+        if (extract.code !== 0) {
+            const message = `Seed zip repair failed during python extract (exit ${extract.code})`;
             if (typeof logFn === 'function') logFn(message, 'warn');
             else logger.warn(message);
             return { ok: false, message };
@@ -277,10 +289,29 @@ const repairSeedZip = async (seedPath, tmpPath, uuid, logFn) => {
             else logger.warn(message);
             return { ok: false, message };
         }
-    } else {
+    } else if (hasZip) {
         const repack = await runCommand('zip', ['-r', '-q', repairedPath, '.'], { cwd: repairDir });
         if (repack.code !== 0) {
             const message = `Seed zip repair failed during zip repack (exit ${repack.code})`;
+            if (typeof logFn === 'function') logFn(message, 'warn');
+            else logger.warn(message);
+            return { ok: false, message };
+        }
+    } else if (hasPython) {
+        const pythonZipScript = [
+            "import os, sys, zipfile",
+            "out = sys.argv[1]",
+            "root = sys.argv[2]",
+            "with zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_STORED) as z:",
+            "    for base, _, files in os.walk(root):",
+            "        for name in files:",
+            "            full = os.path.join(base, name)",
+            "            rel = os.path.relpath(full, root)",
+            "            z.write(full, rel)",
+        ].join("\\n");
+        const repack = await runCommand('python3', ['-c', pythonZipScript, repairedPath, repairDir]);
+        if (repack.code !== 0) {
+            const message = `Seed zip repair failed during python repack (exit ${repack.code})`;
             if (typeof logFn === 'function') logFn(message, 'warn');
             else logger.warn(message);
             return { ok: false, message };
