@@ -20,6 +20,7 @@ const utils = require('./utils');
 const netutils = require('./netutils');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const config = require('../config');
 const Curl = require('node-libcurl').Curl;
 const tasktable = require('./tasktable');
@@ -126,6 +127,28 @@ const getUuid = async (req) => {
     }
 
     return utils.uuidv4();
+};
+
+const hashFileSha256 = (filePath) => new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+});
+
+const logSeedZipDiagnostics = async (seedPath, uuid, logFn) => {
+    try {
+        const stats = await fs.promises.stat(seedPath);
+        const sha = await hashFileSha256(seedPath);
+        const message = `Seed zip diagnostics: path=${seedPath}, size=${stats.size}, sha256=${sha}`;
+        if (typeof logFn === 'function') logFn(message);
+        else logger.info(message);
+    } catch (err) {
+        const message = `Seed zip diagnostics failed for ${seedPath}: ${err.message}`;
+        if (typeof logFn === 'function') logFn(message, 'warn');
+        else logger.warn(message);
+    }
 };
 
 // Translate an import path from Cluster/WebODM namespace to node-local namespace.
@@ -919,6 +942,11 @@ module.exports = {
             logSeed(`Seed task detected with ${fileNames.length} files`);
         }
         const pathImport = params.import_path || null;
+
+        if (fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip')) {
+            const seedPath = path.join(tmpPath, 'seed.zip');
+            await logSeedZipDiagnostics(seedPath, uuid, logSeed);
+        }
         
         // Initialize global directory tracking if not exists
         if (!global.taskProcessingDirs) {
