@@ -21,6 +21,7 @@ const netutils = require('./netutils');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const child_process = require('child_process');
 const config = require('../config');
 const Curl = require('node-libcurl').Curl;
 const tasktable = require('./tasktable');
@@ -149,6 +150,168 @@ const logSeedZipDiagnostics = async (seedPath, uuid, logFn) => {
         if (typeof logFn === 'function') logFn(message, 'warn');
         else logger.warn(message);
     }
+};
+
+const runCommand = (command, args, options = {}) => new Promise((resolve) => {
+    const child = child_process.spawn(command, args, options);
+    let stdout = '';
+    let stderr = '';
+    child.on('error', error => resolve({ error, stdout, stderr }));
+    if (child.stdout) child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+    if (child.stderr) child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('close', code => resolve({ code, stdout, stderr }));
+});
+
+const commandExists = async (command) => {
+    const result = await runCommand(command, ['-h']);
+    return !result.error;
+};
+
+const waitForStableFile = async (filePath, logFn, options = {}) => {
+    const maxWaitMs = options.maxWaitMs || 30000;
+    const intervalMs = options.intervalMs || 500;
+    const requiredStableChecks = options.requiredStableChecks || 3;
+    const label = options.label || filePath;
+
+    let lastSize = -1;
+    let lastMtime = -1;
+    let stableCount = 0;
+    const start = Date.now();
+
+    while (Date.now() - start <= maxWaitMs) {
+        try {
+            const stats = await fs.promises.stat(filePath);
+            const size = stats.size;
+            const mtime = stats.mtimeMs;
+            if (size > 0 && size === lastSize && mtime === lastMtime) {
+                stableCount += 1;
+                if (stableCount >= requiredStableChecks) return true;
+            } else {
+                stableCount = 0;
+            }
+            lastSize = size;
+            lastMtime = mtime;
+        } catch (err) {
+            stableCount = 0;
+        }
+        await utils.sleep(intervalMs);
+    }
+
+    const message = `Timed out waiting for stable file ${label}`;
+    if (typeof logFn === 'function') logFn(message, 'warn');
+    else logger.warn(message);
+    return false;
+};
+
+const testSeedZip = async (seedPath, logFn) => {
+    let result = await runCommand('unzip', ['-t', seedPath]);
+    if (result.error) {
+        result = await runCommand('7z', ['t', seedPath]);
+    }
+    if (result.error) {
+        const message = `Seed zip integrity test skipped (no unzip/7z available): ${result.error.message}`;
+        if (typeof logFn === 'function') logFn(message, 'warn');
+        else logger.warn(message);
+        return { ok: true, skipped: true };
+    }
+    if (result.code === 0) return { ok: true };
+    const detail = (result.stderr || result.stdout || '').trim();
+    const message = detail ? `Seed zip integrity check failed: ${detail}` : `Seed zip integrity check failed (exit code ${result.code})`;
+    if (typeof logFn === 'function') logFn(message, 'warn');
+    else logger.warn(message);
+    return { ok: false, message };
+};
+
+const repairSeedZip = async (seedPath, tmpPath, uuid, logFn) => {
+    const has7z = await commandExists('7z');
+    const hasUnzip = await commandExists('unzip');
+    const hasZip = await commandExists('zip');
+    if (!has7z && !hasUnzip) {
+        const message = `Seed zip repair skipped; no unzip/7z available for ${seedPath}`;
+        if (typeof logFn === 'function') logFn(message, 'warn');
+        else logger.warn(message);
+        return { ok: false, message };
+    }
+    if (!has7z && !hasZip) {
+        const message = `Seed zip repair skipped; no zip/7z available to repackage ${seedPath}`;
+        if (typeof logFn === 'function') logFn(message, 'warn');
+        else logger.warn(message);
+        return { ok: false, message };
+    }
+
+    const repairDir = path.join(tmpPath, `seed_repair_${uuid}`);
+    await fs.promises.mkdir(repairDir, { recursive: true });
+
+    if (has7z) {
+        const extract = await runCommand('7z', ['x', '-y', `-o${repairDir}`, seedPath]);
+        if (extract.code !== 0) {
+            const message = `Seed zip repair failed during 7z extract (exit ${extract.code})`;
+            if (typeof logFn === 'function') logFn(message, 'warn');
+            else logger.warn(message);
+            return { ok: false, message };
+        }
+    } else {
+        const extract = await runCommand('unzip', ['-o', seedPath, '-d', repairDir]);
+        if (extract.code !== 0) {
+            const message = `Seed zip repair failed during unzip extract (exit ${extract.code})`;
+            if (typeof logFn === 'function') logFn(message, 'warn');
+            else logger.warn(message);
+            return { ok: false, message };
+        }
+    }
+
+    const entries = await fs.promises.readdir(repairDir);
+    if (!entries.length) {
+        const message = `Seed zip repair produced no files for ${seedPath}`;
+        if (typeof logFn === 'function') logFn(message, 'warn');
+        else logger.warn(message);
+        return { ok: false, message };
+    }
+
+    const repairedPath = path.join(tmpPath, `seed.repaired.${uuid}.zip`);
+    if (has7z) {
+        const repack = await runCommand('7z', ['a', '-tzip', '-mx=0', repairedPath, '.'], { cwd: repairDir });
+        if (repack.code !== 0) {
+            const message = `Seed zip repair failed during 7z repack (exit ${repack.code})`;
+            if (typeof logFn === 'function') logFn(message, 'warn');
+            else logger.warn(message);
+            return { ok: false, message };
+        }
+    } else {
+        const repack = await runCommand('zip', ['-r', '-q', repairedPath, '.'], { cwd: repairDir });
+        if (repack.code !== 0) {
+            const message = `Seed zip repair failed during zip repack (exit ${repack.code})`;
+            if (typeof logFn === 'function') logFn(message, 'warn');
+            else logger.warn(message);
+            return { ok: false, message };
+        }
+    }
+
+    const replace = () => fs.promises.rename(repairedPath, seedPath);
+    try {
+        await fs.promises.unlink(seedPath);
+        await replace();
+    } catch (err) {
+        const message = `Seed zip repair failed to replace original (${err.message})`;
+        if (typeof logFn === 'function') logFn(message, 'warn');
+        else logger.warn(message);
+        return { ok: false, message };
+    }
+
+    const retest = await testSeedZip(seedPath, logFn);
+    if (!retest.ok) return { ok: false, message: retest.message || 'Seed zip repair failed validation' };
+
+    const message = `Seed zip repaired successfully for ${uuid}`;
+    if (typeof logFn === 'function') logFn(message);
+    else logger.info(message);
+    return { ok: true };
+};
+
+const ensureSeedZipIntegrity = async (seedPath, tmpPath, uuid, logFn) => {
+    const testResult = await testSeedZip(seedPath, logFn);
+    if (testResult.ok) return { ok: true };
+    const repairResult = await repairSeedZip(seedPath, tmpPath, uuid, logFn);
+    return repairResult;
 };
 
 // Translate an import path from Cluster/WebODM namespace to node-local namespace.
@@ -945,7 +1108,15 @@ module.exports = {
 
         if (fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip')) {
             const seedPath = path.join(tmpPath, 'seed.zip');
+            const stable = await waitForStableFile(seedPath, logSeed, { label: `seed.zip for ${uuid}` });
+            if (!stable) {
+                throw new Error(`seed.zip did not stabilize in time for task ${uuid}`);
+            }
             await logSeedZipDiagnostics(seedPath, uuid, logSeed);
+            const integrity = await ensureSeedZipIntegrity(seedPath, tmpPath, uuid, logSeed);
+            if (!integrity.ok) {
+                throw new Error(`seed.zip failed integrity check; ${integrity.message || 'repair failed'}`);
+            }
         }
         
         // Initialize global directory tracking if not exists
