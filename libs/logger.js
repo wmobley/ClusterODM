@@ -40,6 +40,26 @@ logPath += path.sep;
 logPath += package_info.name + ".log";
 
 let transports = [];
+
+// Optional filter: suppress messages containing [TAPIS DEBUG] unless enabled in config
+const tapisFilter = winston.format((info) => {
+    try{
+        if (!config.tapis_debug) {
+            const msg = info.message || '';
+            if (typeof msg === 'string' && msg.indexOf('[TAPIS DEBUG]') !== -1) return false;
+            // also check splat values for TAPIS DEBUG tag
+            const splat = info[Symbol.for('splat')] || [];
+            for (let v of splat){
+                try{
+                    const s = (typeof v === 'string') ? v : JSON.stringify(v);
+                    if (s.indexOf('[TAPIS DEBUG]') !== -1) return false;
+                }catch(e){/* ignore stringify errors */}
+            }
+        }
+    }catch(e){/* on any error, do not filter */}
+    return info;
+})();
+
 const logFormat = winston.format.combine(
     winston.format.errors({ stack: true }),
     winston.format.splat(),

@@ -402,7 +402,9 @@ const translateImportPathForNode = (importPath, nodeHostname) => {
         }
     }
 
-    return null;
+    // If no mapping matched, return the original path (normalized) so nodes that already
+    // share the same storage layout can still use import_path without translation.
+    return path.normalize(importPath);
 };
 
 const parseNodeTaskResponse = (resp) => {
