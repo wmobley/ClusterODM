@@ -1139,7 +1139,12 @@ module.exports = {
 
         if (fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip')) {
             const seedPath = path.join(tmpPath, 'seed.zip');
-            const stable = await waitForStableFile(seedPath, logSeed, { label: `seed.zip for ${uuid}` });
+            const stable = await waitForStableFile(seedPath, logSeed, {
+                label: `seed.zip for ${uuid}`,
+                maxWaitMs: 120000,
+                intervalMs: 1000,
+                requiredStableChecks: 8
+            });
             if (!stable) {
                 throw new Error(`seed.zip did not stabilize in time for task ${uuid}`);
             }
