@@ -18,6 +18,7 @@
 const logger = require('../logger');
 const url = require('url');
 const axios = require('axios');
+const dns = require('dns').promises;
 
 module.exports = class Node{
     constructor(hostname, port, token = ""){
@@ -56,7 +57,7 @@ module.exports = class Node{
 
     async updateInfo(){
         try{
-            let response = await axios.get(this.urlFor('/info'), { timeout: this.timeout });
+            let response = await this._requestWithDnsFallback('get', '/info');
             if (response.status === 200){
                 if (!response.data.error){
                     this.nodeData.info = response.data;
@@ -127,9 +128,7 @@ module.exports = class Node{
 
     async postRequest(url, formData = {}, query = {}){
         try{
-            let response = await axios.post(this.urlFor(url, query), formData, { 
-                                timeout: this.timeout,
-                            });
+            let response = await this._requestWithDnsFallback('post', url, formData, query);
             if (response.status === 200){
                 return response.data;
             }else{
@@ -142,7 +141,7 @@ module.exports = class Node{
 
     async getRequest(url, query = {}){
         try{
-            let response = await axios.get(this.urlFor(url, query), { timeout: this.timeout });
+            let response = await this._requestWithDnsFallback('get', url, null, query);
             if (response.status === 200){
                 return response.data;
             }else{
@@ -234,7 +233,7 @@ module.exports = class Node{
 
     async getOptions(){
         try{
-            let response = await axios.get(this.urlFor('/options'),  { timeout: this.timeout });
+            let response = await this._requestWithDnsFallback('get', '/options');
             if (response.status === 200){
                 return response.data;
             }else{
@@ -284,6 +283,45 @@ module.exports = class Node{
 
     getLastRefreshed(){
         return this.nodeData.lastRefreshed || 0;
+    }
+
+    async _requestWithDnsFallback(method, pathname, data = null, query = {}){
+        const { hostname, port, token } = this.nodeData;
+        const proto = port === 443 ? 'https' : 'http';
+        const queryWithToken = Object.assign({}, query);
+        if (token) queryWithToken.token = token;
+
+        const targets = [hostname];
+        try{
+            const records = await dns.lookup(hostname, { all: true });
+            records.forEach(rec => {
+                if (rec && rec.address && !targets.includes(rec.address)){
+                    targets.push(rec.address);
+                }
+            });
+        }catch(_err){
+            // DNS lookup failed; we'll try the original hostname
+        }
+
+        let lastError;
+        for (const target of targets){
+            const targetUrl = url.format({ protocol: proto, hostname: target, port, pathname, query: queryWithToken });
+            try{
+                const resp = await axios({
+                    method,
+                    url: targetUrl,
+                    data,
+                    timeout: this.timeout,
+                    headers: { Host: hostname }
+                });
+                return resp;
+            }catch(err){
+                lastError = err;
+            }
+        }
+
+        if (lastError) throw lastError;
+        throw new Error('All connection attempts failed');
     }
 
     toJSON(){
