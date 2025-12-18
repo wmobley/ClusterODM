@@ -356,6 +356,14 @@ const translateImportPathForNode = (importPath, nodeHostname) => {
     if (!importPath) return null;
     const mappings = config.node_shared_path_mappings || config.NODE_SHARED_PATH_MAPPINGS || FALLBACK_SHARED_PATH_MAPPINGS || {};
 
+    const expandEnv = (val) => {
+        if (typeof val !== 'string') return val;
+        return val.replace(/\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([^}]+)\}/g, (_match, p1, p2) => {
+            const key = p1 || p2;
+            return process.env[key] || _match;
+        });
+    };
+
     // Try exact hostname, short hostname (strip domain), then wildcard '*'
     const candidates = [];
     if (nodeHostname) candidates.push(nodeHostname);
@@ -370,10 +378,14 @@ const translateImportPathForNode = (importPath, nodeHostname) => {
         // mapForHost is an object of sourcePrefix -> destPrefix
         for (const srcPrefix in mapForHost){
             if (!srcPrefix) continue;
-            if (importPath.indexOf(srcPrefix) === 0){
-                const destPrefix = mapForHost[srcPrefix];
+            const expandedSrc = expandEnv(srcPrefix);
+            if (!expandedSrc) continue;
+            if (importPath.indexOf(expandedSrc) === 0){
+                const destPrefixRaw = mapForHost[srcPrefix];
+                const destPrefix = expandEnv(destPrefixRaw);
+                if (!destPrefix) continue;
                 // remainder after source prefix
-                let remainder = importPath.substring(srcPrefix.length);
+                let remainder = importPath.substring(expandedSrc.length);
                 // ensure there's a separator between destPrefix and remainder if needed
                 if (remainder && !remainder.startsWith(path.sep) && !destPrefix.endsWith(path.sep)){
                     remainder = path.sep + remainder;
