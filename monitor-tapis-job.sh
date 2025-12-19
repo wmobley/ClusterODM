@@ -5,7 +5,7 @@ TOKEN="eyJhbGciOiJSUzI1NiIsImtpZCI6Imd5YU5uVXJJZGxsYkhkWU5vWEpoRE85NTZDa0pkbWdyb
 BASE_URL="https://portals.tapis.io"
 
 if [[ -z "$1" ]]; then
-    echo "Usage: $0 <TAPIS_JOB_UUID>"
+    echo "Usage: $0 <TAPIS_JOB_UUID> [NODEODM_TOKEN]"
     echo ""
     echo "You can get the job UUID from:"
     echo "- ClusterODM logs: Look for 'Successfully submitted Tapis job <UUID>'"
@@ -14,6 +14,12 @@ if [[ -z "$1" ]]; then
 fi
 
 JOB_UUID="$1"
+NODEODM_TOKEN="$2"
+
+if [[ -n "$NODEODM_TOKEN" ]]; then
+    export ODM_NODE_TOKEN="$NODEODM_TOKEN"
+    echo "🔑 Using provided NodeODM token and exporting ODM_NODE_TOKEN for downstream tooling."
+fi
 
 echo "🔍 Monitoring Tapis Job: $JOB_UUID"
 echo "=================================="

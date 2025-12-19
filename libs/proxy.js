@@ -1110,6 +1110,21 @@ module.exports = {
                                 if (action === 'info'){
                                     let response = taskTableEntry.taskInfo;
 
+                                    // If taskInfo is missing or incomplete, try live fetch via route table with node token.
+                                    const needsLiveFetch = !response || !response.status || response.status.code === undefined;
+                                    if (needsLiveFetch) {
+                                        try {
+                                            const route = await routetable.find(taskId);
+                                            if (route && route.node) {
+                                                logger.warn(`[TAPIS DEBUG] Task ${taskId} has no cached info; proxying live /task/${taskId}/info to ${route.node.proxyTargetUrl()}`);
+                                                overrideRequest(req, route.node, query, pathname);
+                                                return proxy.web(req, res, { target: route.node.proxyTargetUrl() });
+                                            }
+                                        } catch (liveErr) {
+                                            logger.warn(`[TAPIS DEBUG] Live fetch fallback failed for ${taskId}: ${liveErr.message}`);
+                                        }
+                                    }
+
                                     // ?with_output support
                                     if (query.with_output !== undefined){
                                         const line = parseInt(query.with_output) || 0;
