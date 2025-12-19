@@ -1116,9 +1116,10 @@ module.exports = {
                                         try {
                                             const route = await routetable.find(taskId);
                                             if (route && route.node) {
-                                                logger.warn(`[TAPIS DEBUG] Task ${taskId} has no cached info; proxying live /task/${taskId}/info to ${route.node.proxyTargetUrl()}`);
-                                                overrideRequest(req, route.node, query, pathname);
-                                                return proxy.web(req, res, { target: route.node.proxyTargetUrl() });
+                                                const targetUrl = `${route.node.proxyTargetUrl()}${pathname}?token=${route.node.getToken() || ''}`;
+                                                logger.warn(`[TAPIS DEBUG] Task ${taskId} has no cached info; fetching live from ${targetUrl}`);
+                                                const axiosResp = await axios.get(targetUrl, { timeout: 10000 });
+                                                return json(res, axiosResp.data || {});
                                             }
                                         } catch (liveErr) {
                                             logger.warn(`[TAPIS DEBUG] Live fetch fallback failed for ${taskId}: ${liveErr.message}`);
