@@ -1108,6 +1108,7 @@ module.exports = {
 
                                 // GET: /task/<uuid>/info
                                 if (action === 'info'){
+                                    logger.info(`[TAPIS DEBUG] /task/${taskId}/info requested (cached=${!!taskTableEntry.taskInfo})`);
                                     let response = taskTableEntry.taskInfo;
 
                                     // If taskInfo is missing or incomplete, try live fetch via route table with node token.
