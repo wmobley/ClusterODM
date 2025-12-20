@@ -98,6 +98,7 @@ export const NodeList = ({ nodes = [], getData = () => {}, refreshTasks = () => 
     <tbody>
       ${nodes &&
       nodes.map((node, idx) => {
+        console.log(node)
         const flags = [];
         if (node.isLocked) flags.push("L");
         if (node.isAutoSpawned) flags.push("A");
