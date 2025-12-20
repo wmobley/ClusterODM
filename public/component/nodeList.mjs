@@ -90,7 +90,7 @@ export const NodeList = ({ nodes = [], getData = () => {}, refreshTasks = () => 
         <th>CPU Cores</th>
         <th>RAM available</th>
         <!--<th>Last updated</th>-->
-        // <th>Flags</th>
+
         <th>Link</th>
         <th>-</th>
       </tr>
@@ -114,7 +114,7 @@ export const NodeList = ({ nodes = [], getData = () => {}, refreshTasks = () => 
           <td>${node.nodeData.info.cpuCores}</td>
           <td>${getRamAvailable(node)}</td>
           <!--<td>${node.nodeData.lastRefreshed > 0 && new Date(node.nodeData.lastRefreshed).toLocaleString()}</td>-->
-          // <td>${flags.join(",")}</td>
+
           <td>${renderNodeLink(node)}</td>
           <td>
             <div class="btn-group" role="group">
