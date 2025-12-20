@@ -107,9 +107,9 @@ export const NodeList = ({ nodes = [], getData = () => {}, refreshTasks = () => 
           <td>
             <${IsOnline} isOnline=${node.isOnline} />
           </td>
-          <td>${node.getTaskQueueCount()}/${node.getMaxParallelTasks()}</td>
-          <td>${node.getEngineInfo()}</td>
-          <td>${node.getVersion()}</td>
+          <td>${node.getTaskQueueCount}/${node.getMaxParallelTasks}</td>
+          <td>${node.getEngineInfo}</td>
+          <td>${node.getVersion}</td>
           <td>${node.nodeData.info.cpuCores}</td>
           <td>${getRamAvailable(node)}</td>
           <!--<td>${node.nodeData.lastRefreshed > 0 && new Date(node.nodeData.lastRefreshed).toLocaleString()}</td>-->
