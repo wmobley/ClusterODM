@@ -1100,6 +1100,10 @@ module.exports = {
                                 }
                                 // Regular node - use HTTP proxy
                                 overrideRequest(req, node, query, pathname);
+                                // Log task/info forwarding explicitly for visibility
+                                if (action === 'info'){
+                                    logger.warn(`[TAPIS DEBUG] Proxying /task/${taskId}/info to ${node.proxyTargetUrl()} with token=${previewToken(node.getToken())}`);
+                                }
                                 proxy.web(req, res, { target: node.proxyTargetUrl() });
                             }
                         }else{
