@@ -884,13 +884,7 @@ module.exports = {
                     let taskId = null;
                     let body = await getReqBody(req);
 
-                    const busboy = new Busboy({ headers: req.headers });
-                    busboy.on('field', function(fieldname, val, fieldnameTruncated, valTruncated) {
-                        if (fieldname === 'uuid'){
-                            taskId = val;
-                        }
-                    });
-                    busboy.on('finish', async function() {
+                    const handleTaskAction = async () => {
                         if (taskId){
                             concurrencyMonitor.decreaseCount(query.token);
 
@@ -933,9 +927,36 @@ module.exports = {
                         }else{
                             json(res, { error: `No uuid found in ${pathname}`});
                         }
-                    });
+                    };
 
-                    utils.stringToStream(body).pipe(busboy);
+                    const contentType = (req.headers['content-type'] || '').toLowerCase();
+                    if (contentType.includes('application/json')){
+                        try{
+                            const parsed = JSON.parse(body || '{}');
+                            taskId = parsed.uuid || parsed.taskId || null;
+                        }catch(e){
+                            logger.warn(`[TAPIS DEBUG] Failed to parse JSON body for ${pathname}: ${e.message}`);
+                        }
+                        await handleTaskAction();
+                        return;
+                    }
+
+                    try{
+                        const busboy = new Busboy({ headers: req.headers });
+                        busboy.on('field', function(fieldname, val, fieldnameTruncated, valTruncated) {
+                            if (fieldname === 'uuid'){
+                                taskId = val;
+                            }
+                        });
+                        busboy.on('finish', async function() {
+                            await handleTaskAction();
+                        });
+
+                        utils.stringToStream(body).pipe(busboy);
+                    }catch(e){
+                        logger.warn(`[TAPIS DEBUG] Failed to parse multipart body for ${pathname}: ${e.message}`);
+                        await handleTaskAction();
+                    }
                 }else if (req.method === 'GET' && pathname === '/task/list') {
                     const taskIds = {};
                     const taskTableEntries = await tasktable.findByToken(query.token);

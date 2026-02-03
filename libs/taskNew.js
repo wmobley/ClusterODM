@@ -1183,16 +1183,20 @@ module.exports = {
             imagesCount = fileNames.length;
             logger.info(`[TAPIS DEBUG] Fixed imagesCount from ${params.imagesCount} to ${imagesCount} based on fileNames array`);
         } else if (pathImport) {
-            try {
-                const counted = await countImagesForImportPath(pathImport);
-                if (counted > 0) {
-                    logger.info(`[TAPIS DEBUG] Counted ${counted} images from import_path ${pathImport}`);
-                    imagesCount = counted;
-                } else {
-                    logger.warn(`[TAPIS DEBUG] Could not determine image count from import_path ${pathImport}; falling back to provided value ${imagesCount}`);
+            if (fs.existsSync(pathImport)) {
+                try {
+                    const counted = await countImagesForImportPath(pathImport);
+                    if (counted > 0) {
+                        logger.info(`[TAPIS DEBUG] Counted ${counted} images from import_path ${pathImport}`);
+                        imagesCount = counted;
+                    } else {
+                        logger.warn(`[TAPIS DEBUG] Could not determine image count from import_path ${pathImport}; falling back to provided value ${imagesCount}`);
+                    }
+                } catch (err) {
+                    logger.warn(`[TAPIS DEBUG] Failed to count images for import_path ${pathImport}: ${err.message}`);
                 }
-            } catch (err) {
-                logger.warn(`[TAPIS DEBUG] Failed to count images for import_path ${pathImport}: ${err.message}`);
+            } else {
+                logger.info(`[TAPIS DEBUG] import_path not accessible on ClusterODM host, skipping image count: ${pathImport}`);
             }
         }
 
