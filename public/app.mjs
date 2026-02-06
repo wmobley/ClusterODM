@@ -103,16 +103,6 @@ export default function App() {
     loadAuthConfig().catch(() => {});
   }, [loadAuthConfig]);
 
-  useEffect(() => {
-    if (auth.status !== "unauthenticated") return;
-    if (authConfig.mode !== "tapis-jwt") return;
-    const token = getTokenFromHash();
-    if (!token) return;
-    handleLogin({ token })
-      .catch((err) => console.warn("Auto-login failed:", err))
-      .finally(clearTokenFromHash);
-  }, [auth.status, authConfig.mode, handleLogin]);
-
   const getJson = useCallback(
     async (path) => {
       const response = await fetch(`${API_PREFIX}${path}`, {
@@ -274,6 +264,16 @@ export default function App() {
     },
     [authConfig.mode, loadAll, loadAuthConfig]
   );
+
+  useEffect(() => {
+    if (auth.status !== "unauthenticated") return;
+    if (authConfig.mode !== "tapis-jwt") return;
+    const token = getTokenFromHash();
+    if (!token) return;
+    handleLogin({ token })
+      .catch((err) => console.warn("Auto-login failed:", err))
+      .finally(clearTokenFromHash);
+  }, [auth.status, authConfig.mode, handleLogin]);
 
   const handleLogout = useCallback(async () => {
     try {
