@@ -10,6 +10,20 @@ import { LoginForm } from "./component/loginForm.mjs";
 const API_PREFIX = window.location.pathname.startsWith("/admin") ? "/admin" : "";
 const DEFAULT_AUTH_MODE = "tapis-jwt";
 
+const getTokenFromHash = () => {
+  const raw = (window.location.hash || "").replace(/^#/, "");
+  if (!raw) return null;
+  const params = new URLSearchParams(raw);
+  const token = params.get("token");
+  return token && token.trim().length > 0 ? token.trim() : null;
+};
+
+const clearTokenFromHash = () => {
+  if (window.location.hash) {
+    window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+  }
+};
+
 const LoadingScreen = () =>
   html`<div class="loading-screen">
     <div class="spinner-border text-primary" role="status">
@@ -88,6 +102,16 @@ export default function App() {
   useEffect(() => {
     loadAuthConfig().catch(() => {});
   }, [loadAuthConfig]);
+
+  useEffect(() => {
+    if (auth.status !== "unauthenticated") return;
+    if (authConfig.mode !== "tapis-jwt") return;
+    const token = getTokenFromHash();
+    if (!token) return;
+    handleLogin({ token })
+      .catch((err) => console.warn("Auto-login failed:", err))
+      .finally(clearTokenFromHash);
+  }, [auth.status, authConfig.mode, handleLogin]);
 
   const getJson = useCallback(
     async (path) => {
