@@ -22,6 +22,21 @@ const fs = require('fs');
 const path = require('path');
 const TapisNode = require('../classes/TapisNode');
 
+function getTaskOption(taskOptions, name) {
+    if (!Array.isArray(taskOptions)) return null;
+    for (const opt of taskOptions) {
+        if (!opt || typeof opt !== 'object') continue;
+        if (opt.name === name) return opt.value;
+    }
+    return null;
+}
+
+function normalizeJobToken(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return raw.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 module.exports = class TapisAsrProvider extends AbstractASRProvider{
     constructor(userConfig){
         super({
@@ -99,6 +114,30 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     getDownloadsBaseUrl(){
         // Files will be accessed through Tapis Files API
         return `${this.getConfig("tapis.baseUrl")}/v3/files`;
+    }
+
+    buildJobLabel(imagesCount, taskOptions){
+        const parts = [];
+
+        const split = getTaskOption(taskOptions, 'split');
+        if (split !== null && split !== undefined && split !== '') {
+            parts.push(`s${split}`);
+        }
+
+        const overlap = getTaskOption(taskOptions, 'split-overlap');
+        if (overlap !== null && overlap !== undefined && overlap !== '') {
+            parts.push(`o${overlap}`);
+        }
+
+        const noAlign = getTaskOption(taskOptions, 'sm-no-align');
+        if (noAlign === true || noAlign === 'true' || noAlign === 1 || noAlign === '1') {
+            parts.push('noalign');
+        }
+
+        const prefix = normalizeJobToken(this.getConfig('job.namePrefix', ''));
+        if (prefix) parts.unshift(prefix);
+
+        return parts.filter(Boolean).join('-');
     }
 
     canHandle(imagesCount){
@@ -432,13 +471,15 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         try {
             for (let i = 0; i < jobsToSubmit; i++){
                 const jobIndex = i + 1;
-                const jobName = jobsToSubmit > 1 ? `${jobId}-${jobIndex}` : jobId;
+                const baseJobName = jobsToSubmit > 1 ? `${jobId}-${jobIndex}` : jobId;
+                const jobLabel = this.buildJobLabel(imagesCount, taskOptions);
+                const jobName = jobLabel ? `${baseJobName}-${jobLabel}` : baseJobName;
                 const replicasForJob = nodesForJob;
                 const nodeMaxConcurrency = jobProps.maxConcurrency || jobProps.nodeMaxConcurrency || jobProps.coresPerNode || defaultCores || 1;
 
                 const jobDefinition = {
                     name: `${jobName}`,
-                    description: `ClusterODM NodeODM instance for ${imagesCount} images (waiting for data) [${jobIndex}/${jobsToSubmit}]`,
+                    description: `ClusterODM NodeODM instance for ${imagesCount} images (waiting for data) [${jobIndex}/${jobsToSubmit}]${jobLabel ? ` [${jobLabel}]` : ''}`,
                     appId: this.getConfig("app.appId"),
                     appVersion: this.getConfig("app.appVersion"),
                     execSystemId: this.getConfig("system.executionSystemId"),
