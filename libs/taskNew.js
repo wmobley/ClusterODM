@@ -1014,6 +1014,13 @@ module.exports = {
             odmOptions = utils.clone(taskOptions.filter(to => to.name !== 'sm-cluster'));
         }
 
+        // Enforce no EPT generation (Entwine) for LS6 runs
+        const beforeLen = odmOptions.length;
+        odmOptions = odmOptions.filter(opt => opt.name !== 'pc-ept');
+        if (odmOptions.length !== beforeLen){
+            logger.info(`[TAPIS DEBUG] Stripped pc-ept from ODM options to avoid Entwine`);
+        }
+
         // Check limits
         if (limits.options){
             const limitOptions = limits.options;
