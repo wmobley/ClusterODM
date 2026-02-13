@@ -37,14 +37,24 @@
       "maxJobTime": "04:00:00"
     },
     {
-      "maxImages": 10000,
+      "maxImages": 1000,
       "jobCount": 1,
       "nodeCount": 2,
-      "logicalQueue": "development",
+      "logicalQueue": "normal",
       "coresPerNode": 64,
       "maxConcurrency": 64,
       "memoryMB": 30720,
-      "maxJobTime": "02:00:00"
+      "maxJobTime": "03:00:00"
+    },
+    {
+      "maxImages": 10000,
+      "jobCount": 1,
+      "nodeCount": 2,
+      "logicalQueue": "normal",
+      "coresPerNode": 64,
+      "maxConcurrency": 64,
+      "memoryMB": 30720,
+      "maxJobTime": "06:00:00"
     }
   ]
 }
