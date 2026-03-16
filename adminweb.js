@@ -656,7 +656,24 @@ module.exports = {
     });
 
     app.post("/webhook/register-node", async (req, res) => {
-      const { hostname, port, token, registrationSecret, tapisToken, registrationUuid, tapisJobUuid, nodeReady, tapisJobOwner } = req.body;
+      const {
+        hostname,
+        port,
+        token,
+        registrationSecret,
+        tapisToken,
+        registrationUuid,
+        tapisJobUuid,
+        nodeReady,
+        tapisJobOwner,
+        childIndex,
+        role,
+        hostId,
+        workerId,
+        jobIndex,
+        jobCount,
+        replicasPerJob
+      } = req.body;
 
       // Extract Tapis JWT token from Authorization header (Bearer token)
       let authHeaderToken = null;
@@ -676,6 +693,40 @@ module.exports = {
 
       logger.info(`Node registration request from ${hostname}:${port}`);
       logger.info(`[TAPIS DEBUG] Registration payload: ${JSON.stringify(req.body)}`);
+
+      const registrationMeta = {
+        tapisJobUuid: tapisJobUuid || null,
+        registrationUuid: registrationUuid || null,
+        tapisJobOwner: tapisJobOwner || null,
+        childIndex: childIndex || null,
+        role: role || null,
+        hostId: hostId !== undefined ? hostId : null,
+        workerId: workerId !== undefined ? workerId : null,
+        jobIndex: jobIndex !== undefined ? jobIndex : null,
+        jobCount: jobCount !== undefined ? jobCount : null,
+        replicasPerJob: replicasPerJob !== undefined ? replicasPerJob : null
+      };
+
+      if (tapisJobUuid) {
+        const duplicateRegistrations = nodes.all().filter(existingNode =>
+          existingNode &&
+          existingNode.nodeData &&
+          existingNode.nodeData.tapisJobUuid === tapisJobUuid &&
+          !(existingNode.hostname() === hostname && existingNode.port() === parseInt(port))
+        );
+
+        if (duplicateRegistrations.length > 0) {
+          const duplicates = duplicateRegistrations.map(existingNode => ({
+            host: existingNode.hostname(),
+            port: existingNode.port(),
+            childIndex: existingNode.nodeData.childIndex || null,
+            role: existingNode.nodeData.role || null,
+            workerId: existingNode.nodeData.workerId || null,
+            nodeReady: existingNode.nodeData.nodeReady || null
+          }));
+          logger.warn(`[TAPIS DEBUG] Duplicate registration attempt for tapisJobUuid=${tapisJobUuid} from ${hostname}:${port}. Existing registrations: ${JSON.stringify(duplicates)}`);
+        }
+      }
 
       // Authentication validation
       let authenticated = false;
@@ -982,6 +1033,7 @@ module.exports = {
             // Register the node first
             const node = nodes.addUnique(hostname, port, token);
             if (node) {
+              Object.assign(node.nodeData, registrationMeta, { nodeReady: !!nodeReady });
               logger.info(`Registered NodeODM ${hostname}:${port} for pending Tapis task`);
 
               // Create and submit the task to this real node
@@ -1120,7 +1172,9 @@ module.exports = {
       const node = nodes.addUnique(hostname, port, token);
 
       if (node) {
+        Object.assign(node.nodeData, registrationMeta, { nodeReady: !!nodeReady });
         logger.info(`Successfully registered regular node ${hostname}:${port}`);
+        logger.warn(`[TAPIS DEBUG] Registration for ${hostname}:${port} fell through to regular node creation (tapisJobUuid=${tapisJobUuid || 'none'}, childIndex=${childIndex || 'none'}, role=${role || 'none'}, workerId=${workerId !== undefined ? workerId : 'none'})`);
         node.updateInfo();
         const provider = require('./libs/asrProvider').get();
         if (provider && provider.pendingTasks) {
