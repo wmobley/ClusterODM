@@ -661,6 +661,7 @@ module.exports = {
 
                 else if (fieldname === 'outputs' && val){
                     params.outputs = val;
+                    logger.info(`[TAPIS DEBUG] Parsed outputs field for task "${params.taskName || 'unnamed'}": ${val}`);
                 }
 
                 else if (fieldname === 'dateCreated' && !isNaN(parseInt(val))){
@@ -1422,6 +1423,7 @@ module.exports = {
                         });
                     }
                     if (outputs){
+                        logger.info(`[TAPIS DEBUG] Forwarding outputs for task ${uuid} (${name}) to node ${node}: ${outputs}`);
                         body.push({
                             name: 'outputs',
                             contents: outputs
