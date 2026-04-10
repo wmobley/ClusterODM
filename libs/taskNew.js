@@ -203,6 +203,83 @@ const waitForStableFile = async (filePath, logFn, options = {}) => {
     return false;
 };
 
+const stableStringify = (value) => {
+    if (Array.isArray(value)) {
+        return `[${value.map(stableStringify).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        const keys = Object.keys(value).sort();
+        return `{${keys.map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+};
+
+const normalizeImportPathKey = (importPath) => {
+    if (!importPath) return null;
+    try {
+        return path.resolve(String(importPath).trim());
+    } catch (_) {
+        return String(importPath).trim();
+    }
+};
+
+const toOptionMap = (options = []) => {
+    const map = new Map();
+    if (!Array.isArray(options)) return map;
+
+    options.forEach(option => {
+        if (!option || option.name === undefined) return;
+        map.set(String(option.name), stableStringify(option.value));
+    });
+
+    return map;
+};
+
+const taskOptionsContainRequestedValues = (existingOptions = [], requestedOptions = []) => {
+    const existingMap = toOptionMap(existingOptions);
+    const requestedMap = toOptionMap(requestedOptions);
+
+    for (const [name, value] of requestedMap.entries()) {
+        if (!existingMap.has(name)) return false;
+        if (existingMap.get(name) !== value) return false;
+    }
+
+    return true;
+};
+
+const findMatchingPendingTask = async ({ token, importPath, taskName, requestedOptions }) => {
+    const normalizedImportPath = normalizeImportPathKey(importPath);
+    if (!token || !normalizedImportPath) return null;
+
+    const queuedTasks = await tasktable.findByToken(token);
+    for (const [taskId, taskEntry] of Object.entries(queuedTasks || {})) {
+        const taskInfo = taskEntry && taskEntry.taskInfo;
+        if (!taskInfo || !taskInfo.status) continue;
+        if (![statusCodes.QUEUED, statusCodes.RUNNING].includes(taskInfo.status.code)) continue;
+
+        const queuedImportPath = normalizeImportPathKey(taskEntry.importPath);
+        if (queuedImportPath !== normalizedImportPath) continue;
+        if ((taskInfo.name || '') !== (taskName || '')) continue;
+        if (!taskOptionsContainRequestedValues(taskInfo.options || [], requestedOptions)) continue;
+
+        return { uuid: taskId, source: 'tasktable' };
+    }
+
+    const provider = asrProvider.get();
+    if (provider && provider.pendingTasks) {
+        for (const pendingTask of provider.pendingTasks.values()) {
+            if (!pendingTask || pendingTask.token !== token) continue;
+            if (normalizeImportPathKey(pendingTask.pathImport) !== normalizedImportPath) continue;
+            if ((pendingTask.req && pendingTask.req.body && pendingTask.req.body.name ? pendingTask.req.body.name : '') !== (taskName || '')) continue;
+            if (!taskOptionsContainRequestedValues(pendingTask.taskOptions || [], requestedOptions)) continue;
+
+            return { uuid: pendingTask.clusterTaskId || pendingTask.taskId, source: 'pendingTasks' };
+        }
+    }
+
+    return null;
+};
+
 const testSeedZip = async (seedPath, logFn) => {
     let result = await runCommand('unzip', ['-t', seedPath]);
     if (result.error) {
@@ -1208,6 +1285,29 @@ module.exports = {
             }
         }
 
+        if (pathImport) {
+            const duplicateTask = await findMatchingPendingTask({
+                token,
+                importPath: pathImport,
+                taskName,
+                requestedOptions: options
+            });
+
+            if (duplicateTask && duplicateTask.uuid) {
+                logger.warn(`[TAPIS DEBUG] Reusing existing task ${duplicateTask.uuid} for duplicate import_path submission ${uuid} (source=${duplicateTask.source}, import_path=${pathImport})`);
+                if (global.taskProcessingDirs) {
+                    global.taskProcessingDirs.delete(tmpPath);
+                }
+                try {
+                    utils.rmdir(tmpPath);
+                } catch (e) {
+                    logger.warn(`[TAPIS DEBUG] Failed to clean duplicate tmpPath ${tmpPath}: ${e.message}`);
+                }
+                utils.json(res, { uuid: duplicateTask.uuid, deduped: true });
+                return;
+            }
+        }
+
         logger.info(`[TAPIS DEBUG] Starting task processing for UUID: ${uuid}`);
         
         // Debug: Check if files still exist at the very start of task processing (skip for path-based tasks)
@@ -1611,7 +1711,7 @@ module.exports = {
             };
 
             // Add item to task table
-            await tasktable.add(uuid, { taskInfo, abort: abortTask, output: ["Launching... please wait! This can take a few minutes."] }, token);
+            await tasktable.add(uuid, { taskInfo, abort: abortTask, output: ["Launching... please wait! This can take a few minutes."], importPath: pathImport }, token);
 
             // Send back response to user right away
             utils.json(res, { uuid });
