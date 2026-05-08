@@ -25,7 +25,8 @@
   "maxUploadTime": 3600,
   "jobLimit": 10,
   "createRetries": 3,
-  "imageSizeMapping": [
+
+    "imageSizeMapping": [
     {
       "maxImages": 200,
       "jobCount": 1,
@@ -44,17 +45,28 @@
       "coresPerNode": 64,
       "maxConcurrency": 64,
       "memoryMB": 30720,
-      "maxJobTime": "03:00:00"
+      "maxJobTime": "06:00:00"
     },
     {
-      "maxImages": 10000,
+      "maxImages": 3000,
       "jobCount": 1,
-      "nodeCount": 2,
+      "nodeCount": 3,
       "logicalQueue": "normal",
       "coresPerNode": 64,
       "maxConcurrency": 64,
       "memoryMB": 30720,
-      "maxJobTime": "06:00:00"
+      "maxJobTime": "12:00:00"
+    },
+    {
+      "maxImages": 10000,
+      "jobCount": 1,
+      "nodeCount": 4,
+      "logicalQueue": "normal",
+      "coresPerNode": 64,
+      "maxConcurrency": 64,
+      "memoryMB": 30720,
+      "maxJobTime": "12:00:00"
     }
+
   ]
 }
