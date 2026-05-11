@@ -9,7 +9,9 @@ BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${BASE_DIR}"
 
 PID_FILE="clusterodm-tapis.pid"
-LOG_FILE="clusterodm-tapis.log"
+LOG_DIR="log"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-7}"
+LOG_FILE="${LOG_DIR}/clusterodm$(date +%Y%m%d).log"
 ASR_CONFIG="tapis-config.json"
 NODE_CONFIG="clusterodm-config.json"
 
@@ -33,6 +35,16 @@ fi
 PORT="${PORT:-3000}"
 ADMIN_WEB_PORT="${ADMIN_WEB_PORT:-10000}"
 
+if ! [[ "${LOG_RETENTION_DAYS}" =~ ^[0-9]+$ ]] || (( LOG_RETENTION_DAYS < 1 )); then
+    echo "LOG_RETENTION_DAYS must be a positive integer."
+    exit 1
+fi
+
+prune_clusterodm_logs() {
+    mkdir -p "${LOG_DIR}"
+    find "${LOG_DIR}" -maxdepth 1 -type f -name 'clusterodm*.log' -mtime +"$((LOG_RETENTION_DAYS - 1))" -delete
+}
+
 stop_clusterodm() {
     if [[ -f "${PID_FILE}" ]]; then
         local pid
@@ -50,6 +62,7 @@ stop_clusterodm() {
 TMP_DIR_ARG="${TMP_DIR:-/corral/clusterodm/tmp}"
 
 start_clusterodm() {
+    prune_clusterodm_logs
     echo "Starting ClusterODM-Tapis on port ${PORT} (admin web ${ADMIN_WEB_PORT}), tmp dir ${TMP_DIR_ARG}"
     node index.js \
         --asr "${ASR_CONFIG}" \
@@ -58,7 +71,7 @@ start_clusterodm() {
         --admin-web-port "${ADMIN_WEB_PORT}" \
         --allow-local-download-bypass true \
         --tmp-dir "${TMP_DIR_ARG}" \
-        > "${LOG_FILE}" 2>&1 &
+        >> "${LOG_FILE}" 2>&1 &
 
     echo $! > "${PID_FILE}"
     echo "ClusterODM-Tapis started with PID: $(cat "${PID_FILE}")"

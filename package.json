@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-  "test": "node test/test-config-node-shared-path.js && node test/test-parse-node-response.js && node test/test-translate-path.js && node test/test-translate-path-edges.js",
+    "test": "node test/test-config-node-shared-path.js && node test/test-parse-node-response.js && node test/test-translate-path.js && node test/test-translate-path-edges.js && node test/test-tapis-active-jobs.js",
     "winbundle": "node winbundle.js"
   },
   "repository": {

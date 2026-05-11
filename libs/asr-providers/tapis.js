@@ -37,6 +37,22 @@ function normalizeJobToken(value) {
     return raw.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+const DEFAULT_ACTIVE_JOB_STATUSES = [
+    "PENDING",
+    "PROCESSING_INPUTS",
+    "STAGING_INPUTS",
+    "STAGING_JOB",
+    "STAGED",
+    "SUBMITTING",
+    "SUBMITTING_JOB",
+    "QUEUED",
+    "RUNNING",
+    "ARCHIVING",
+    "CLEANING_UP",
+    "PAUSED",
+    "BLOCKED"
+];
+
 module.exports = class TapisAsrProvider extends AbstractASRProvider{
     constructor(userConfig){
         super({
@@ -179,6 +195,12 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return this.getConfig("maxUploadTime");
     }
 
+    getActiveJobStatuses(){
+        let statuses = this.getConfig("activeJobStatuses", DEFAULT_ACTIVE_JOB_STATUSES);
+        if (!Array.isArray(statuses)) statuses = [statuses];
+        return new Set(statuses.map(status => String(status || '').toUpperCase()).filter(Boolean));
+    }
+
     calculateNodeSubmissionPlan(imagesCount){
         const jobProps = this.getJobPropertiesFor(imagesCount) || {};
         const defaultNodeCount = this.getConfig("job.nodeCount", 1);
@@ -291,6 +313,116 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             timeout: 300000, // 5 minutes for large file transfers
             maxRedirects: 5
         });
+    }
+
+    getJobListItems(responseData){
+        if (!responseData) return [];
+        const result = responseData.result;
+        if (Array.isArray(result)) return result;
+        if (result && Array.isArray(result.jobs)) return result.jobs;
+        if (result && Array.isArray(result.items)) return result.items;
+        if (result && Array.isArray(result.records)) return result.records;
+        if (result && Array.isArray(result.listing)) return result.listing;
+        if (Array.isArray(responseData.jobs)) return responseData.jobs;
+        if (Array.isArray(responseData.items)) return responseData.items;
+        if (Array.isArray(responseData.records)) return responseData.records;
+        return [];
+    }
+
+    getJobNextPage(responseData){
+        if (!responseData || !responseData.result) return null;
+        const result = responseData.result;
+        if (typeof result !== 'object' || Array.isArray(result)) return null;
+        return result.next || result.nextPage || result.next_page || result.links?.next || null;
+    }
+
+    getJobUniqueKey(job){
+        if (!job || typeof job !== 'object') return null;
+        return job.uuid || job.id || job.jobUuid || job.jobUUID || job.jobId || job.job_id || null;
+    }
+
+    getJobAppIds(job){
+        if (!job || typeof job !== 'object') return [];
+
+        return [
+            job.appId,
+            job.app_id,
+            job.appID,
+            job.applicationId,
+            job.application_id,
+            typeof job.app === 'string' ? job.app : null,
+            job.app && job.app.id,
+            job.app && job.app.appId
+        ].filter(Boolean).map(value => String(value));
+    }
+
+    jobMatchesCluster(job){
+        if (!job || typeof job !== 'object') return false;
+
+        const configuredAppId = this.getConfig("app.appId");
+        if (configuredAppId && this.getJobAppIds(job).indexOf(String(configuredAppId)) !== -1) return true;
+
+        const tags = Array.isArray(job.tags) ? job.tags.join(' ') : '';
+        const haystack = [
+            job.name,
+            job.jobName,
+            job.description,
+            job.notes,
+            tags
+        ].map(value => String(value || '').toLowerCase()).join(' ');
+
+        return haystack.includes('clusterodm');
+    }
+
+    isActiveTapisJob(job){
+        if (!job || typeof job !== 'object') return false;
+        const status = String(job.status || job.state || "").toUpperCase();
+        return this.getActiveJobStatuses().has(status);
+    }
+
+    async listUserJobs(token, limit = null){
+        const client = this.createApiClient(token);
+        const jobs = [];
+        const seen = new Set();
+        const pageLimit = parseInt(limit || this.getConfig("jobListLimit", 100), 10) || 100;
+        const maxPages = parseInt(this.getConfig("jobListMaxPages", 10), 10) || 10;
+        let skip = 0;
+        let next = null;
+
+        for (let page = 0; page < maxPages; page++){
+            const params = { limit: pageLimit, skip };
+            const response = next
+                ? await client.get(next)
+                : await client.get('/v3/jobs/list', { params });
+            const items = this.getJobListItems(response.data);
+
+            let added = 0;
+            for (const job of items){
+                const key = this.getJobUniqueKey(job);
+                if (key && seen.has(key)) continue;
+                if (key) seen.add(key);
+                jobs.push(job);
+                added++;
+            }
+
+            next = this.getJobNextPage(response.data);
+
+            if (next) {
+                skip += pageLimit;
+                continue;
+            }
+            if (items.length < pageLimit || added === 0) break;
+            skip += pageLimit;
+        }
+
+        return jobs;
+    }
+
+    async countActiveJobsForToken(token){
+        const jobs = await this.listUserJobs(token);
+        const activeJobs = jobs.filter(job => this.jobMatchesCluster(job) && this.isActiveTapisJob(job));
+        logger.info(`[TAPIS DEBUG] Active Tapis ClusterODM jobs for token: ${activeJobs.length} (listed=${jobs.length})`);
+        return activeJobs.length;
     }
 
     // Upload files to Tapis storage system
@@ -692,8 +824,16 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
             // Check if we've reached the job limit
             const machineLimit = this.getMachinesLimit();
-            if (machineLimit !== -1 && (this.activeJobs.size + jobsToSubmit) > machineLimit) {
-                throw new Error(`Job limit reached (${machineLimit}). Active: ${this.activeJobs.size}, requested: ${jobsToSubmit}`);
+            if (machineLimit !== -1) {
+                let activeJobCount;
+                try {
+                    activeJobCount = await this.countActiveJobsForToken(token);
+                } catch (e) {
+                    throw new Error(`Could not count active Tapis jobs for job limit check: ${e.message}`);
+                }
+                if ((activeJobCount + jobsToSubmit) > machineLimit) {
+                    throw new Error(`Job limit reached (${machineLimit}). Active: ${activeJobCount}, requested: ${jobsToSubmit}`);
+                }
             }
 
             // Submit Tapis job directly without creating virtual TapisNode (no file upload yet)

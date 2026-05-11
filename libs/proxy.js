@@ -363,6 +363,17 @@ module.exports = {
             if (maxConcurrentTasks === 0) return true;
             if (!maxConcurrentTasks) return false;
 
+            const provider = asrProvider.get();
+            if (provider && typeof provider.countActiveJobsForToken === 'function' && token){
+                try{
+                    const activeJobs = await provider.countActiveJobsForToken(token);
+                    logger.info(`[TAPIS DEBUG] Tapis active job count=${activeJobs}, maxConcurrentTasks=${maxConcurrentTasks}`);
+                    return activeJobs >= maxConcurrentTasks;
+                }catch(e){
+                    logger.warn(`[TAPIS DEBUG] Could not count active Tapis jobs, falling back to ClusterODM route table: ${e.message}`);
+                }
+            }
+
             const userRoutes = await routetable.findByToken(token);
             let runningTasks = 0;
             await new Promise((resolve) => {
