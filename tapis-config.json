@@ -23,7 +23,7 @@
     "coresPerNode": 2,
     "memoryMB": 8192,
     "archiveOnAppError": true,
-    "maxNodesPerJob": 2
+    "maxNodesPerJob": 4
   },
   "maxRuntime": 7200,
   "maxUploadTime": 3600,
@@ -62,6 +62,16 @@
       "maxJobTime": "12:00:00"
     },
     {
+      "maxImages": 6000,
+      "jobCount": 1,
+      "nodeCount": 3,
+      "logicalQueue": "normal",
+      "coresPerNode": 64,
+      "maxConcurrency": 64,
+      "memoryMB": 30720,
+      "maxJobTime": "15:00:00"
+    },
+    {
       "maxImages": 10000,
       "jobCount": 1,
       "nodeCount": 4,
@@ -69,7 +79,7 @@
       "coresPerNode": 64,
       "maxConcurrency": 64,
       "memoryMB": 30720,
-      "maxJobTime": "12:00:00"
+      "maxJobTime": "24:00:00"
     }
 
   ]
