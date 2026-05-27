@@ -1236,8 +1236,19 @@ module.exports = {
             logSeed(`Seed task detected with ${fileNames.length} files`);
         }
         const pathImport = params.import_path || null;
+        logger.info(`[SPLIT-MERGE DEBUG][${taskId}] intake uuid=${uuid} pathImport=${pathImport || ""} fileNames=${fileNames.length} imagesCount=${imagesCount} tmpPath=${tmpPath}`);
+        if (pathImport) {
+            try {
+                const importStats = fs.statSync(pathImport);
+                const importEntries = importStats.isDirectory() ? fs.readdirSync(pathImport).slice(0, 20) : [];
+                logger.info(`[SPLIT-MERGE DEBUG][${taskId}] import_path stat type=${importStats.isDirectory() ? "dir" : "file"} size=${importStats.size} mtime=${importStats.mtime.toISOString()} entries=${importEntries.join(",")}`);
+            } catch (err) {
+                logger.warn(`[SPLIT-MERGE DEBUG][${taskId}] import_path stat failed for ${pathImport}: ${err.message}`);
+            }
+        }
 
         if (fileNames.some(name => typeof name === 'string' && name.toLowerCase() === 'seed.zip')) {
+            logger.warn(`[SPLIT-MERGE DEBUG][${taskId}] seed.zip upload path reached for uuid=${uuid}; pathImport=${pathImport || ""}`);
             const seedPath = path.join(tmpPath, 'seed.zip');
             const stable = await waitForStableFile(seedPath, logSeed, {
                 label: `seed.zip for ${uuid}`,

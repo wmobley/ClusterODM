@@ -1065,10 +1065,18 @@ module.exports = {
                   let usedImportPath = false;
                   if (pendingTask.pathImport) {
                     const translated = translateImportPathForNode(pendingTask.pathImport, hostname);
+                    logger.info(`[TAPIS DEBUG] Pending import_path translation for ${pendingTask.clusterTaskId || pendingTask.taskId || 'auto'}: original=${pendingTask.pathImport}, node=${hostname}, translated=${translated || ''}`);
                     if (translated) {
                       form.append('import_path', translated);
                       usedImportPath = true;
                       logger.info(`[TAPIS DEBUG] Using import_path ${translated} for pending Tapis task ${pendingTask.clusterTaskId || pendingTask.taskId || 'auto'}`);
+                      try {
+                        const stat = fs.statSync(translated);
+                        const entries = stat.isDirectory() ? fs.readdirSync(translated).slice(0, 20) : [];
+                        logger.info(`[TAPIS DEBUG] import_path stat for ${pendingTask.clusterTaskId || pendingTask.taskId || 'auto'}: type=${stat.isDirectory() ? 'dir' : 'file'} size=${stat.size} mtime=${stat.mtime.toISOString()} entries=${entries.join(',')}`);
+                      } catch (e) {
+                        logger.warn(`[TAPIS DEBUG] import_path stat failed for ${translated}: ${e.message}`);
+                      }
                     } else {
                       logger.warn(`[TAPIS DEBUG] Could not translate import_path ${pendingTask.pathImport} for node ${hostname}, falling back to HTTP upload`);
                     }
@@ -1076,6 +1084,7 @@ module.exports = {
 
                   // Add image files if available (and we are not using import_path)
                   if (!usedImportPath && pendingTask.fileNames && pendingTask.tmpPath) {
+                    logger.warn(`[TAPIS DEBUG] Falling back to HTTP file upload for ${pendingTask.clusterTaskId || pendingTask.taskId || 'auto'}: files=${pendingTask.fileNames.length}, tmpPath=${pendingTask.tmpPath}`);
                     for (const fileName of pendingTask.fileNames) {
                       const filePath = path.join(pendingTask.tmpPath, fileName);
                       if (fs.existsSync(filePath)) {
