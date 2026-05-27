@@ -36,6 +36,11 @@ cp tapis-config-sample.json tapis-config.json
 #### System Settings
 - `system.executionSystemId`: Tapis system ID where jobs will run
 - `system.archiveSystemId`: Tapis system ID where files will be stored
+- `system.logicalQueue`: Default Tapis logical queue
+- `system.queueFilter`: Optional fallback queue list when the Tapis app does not expose `notes.queueFilter`
+
+#### Scheduler Settings
+- `scheduler.defaultAllocation`: Fallback TACC allocation charge code. WebODM should normally submit a user-specific allocation from TAS.
 
 #### Job Configuration
 - `job.maxJobTime`: Maximum wall time for jobs (HH:MM:SS format)
@@ -67,6 +72,16 @@ The `imageSizeMapping` array defines resource allocation based on the number of 
 
 - `jobCount` controls how many Tapis jobs are submitted in parallel for datasets up to `maxImages`. Each job uses the global `job.nodeCount` (or an optional `computeNodeCount` override) to size the Tapis allocation.
 - When split-merge processing is enabled (default), ClusterODM automatically sets the ODM `--split` option so that each Tapis job handles roughly `images / jobCount` images, ensuring submodels are distributed across the available nodes.
+
+## WebODM Task Options
+
+ClusterODM exposes these Tapis-specific options through `/options`:
+
+- `tapis-queue`: Queue choices come from the Tapis app `notes.queueFilter`, falling back to `system.queueFilter`.
+- `tapis-allocation`: TACC allocation charge code. WebODM populates this from TAS using service credentials.
+- `tapis-max-run-time`: Runtime in minutes, capped at 2880 minutes.
+
+These options are used only to build the Tapis job submission. They are stripped before the ODM task is forwarded to NodeODM. When a selected queue starts with `gpu-`, ClusterODM forces ODM `no-gpu` to `false` so GPU acceleration is not disabled on GPU queues.
 
 ## Usage
 

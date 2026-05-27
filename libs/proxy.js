@@ -118,6 +118,23 @@ module.exports = {
             }
         };
 
+        const withProviderOptions = async (baseOptions, token) => {
+            const provider = asrProvider.get();
+            if (!provider || typeof provider.getClusterOptions !== 'function') return baseOptions;
+
+            try {
+                const providerOptions = await provider.getClusterOptions(token);
+                if (!Array.isArray(providerOptions) || providerOptions.length === 0) return baseOptions;
+
+                const providerOptionNames = new Set(providerOptions.map(option => option.name));
+                const filteredBaseOptions = baseOptions.filter(option => !providerOptionNames.has(option.name));
+                return filteredBaseOptions.concat(providerOptions);
+            } catch (e) {
+                logger.warn(`[TAPIS DEBUG] Could not append provider task options: ${e.message}`);
+                return baseOptions;
+            }
+        };
+
         const getLimitedOptions = async (token, limits, node) => {
             const cacheValue = optionsCache.get(token);
             if (cacheValue) return cacheValue;
@@ -350,12 +367,14 @@ module.exports = {
                         "help": "URL of the split-merge cluster coordinator. Automatically set by ClusterODM when using distributed processing. Leave empty for single-machine processing."
                     }
                 ];
-                const limitedOptions = odmOptions.optionsWithLimits(defaultOptions, limits.options);
+                const optionsWithProvider = await withProviderOptions(defaultOptions, token);
+                const limitedOptions = odmOptions.optionsWithLimits(optionsWithProvider, limits.options);
                 return optionsCache.set(token, limitedOptions);
             }
 
             const options = await node.getOptions();
-            const limitedOptions = odmOptions.optionsWithLimits(options, limits.options);
+            const optionsWithProvider = await withProviderOptions(options, token);
+            const limitedOptions = odmOptions.optionsWithLimits(optionsWithProvider, limits.options);
             return optionsCache.set(token, limitedOptions);
         };
 

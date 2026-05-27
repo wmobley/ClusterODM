@@ -11,7 +11,11 @@
   "system": {
     "executionSystemId": "CHANGEME!",
     "archiveSystemId": "CHANGEME!",
-    "logicalQueue": "vm-small"
+    "logicalQueue": "vm-small",
+    "queueFilter": ["vm-small", "normal", "development"]
+  },
+  "scheduler": {
+    "defaultAllocation": "PT2050-DataX"
   },
   "job": {
     "maxJobTime": "02:00:00",

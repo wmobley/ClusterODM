@@ -21,6 +21,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const TapisNode = require('../classes/TapisNode');
+const tapisTaskOptions = require('../tapisTaskOptions');
 
 function getTaskOption(taskOptions, name) {
     if (!Array.isArray(taskOptions)) return null;
@@ -88,6 +89,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
         this.activeJobs = new Map();
         this.jobStatusCache = new Map();
+        this.appQueueCache = null;
     }
 
     async initialize(){
@@ -193,6 +195,154 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
     getMaxUploadTime(){
         return this.getConfig("maxUploadTime");
+    }
+
+    getConfiguredDefaultAllocation(){
+        return this.getConfig("scheduler.defaultAllocation",
+            this.getConfig("allocation.defaultChargeCode",
+                this.getConfig("allocation.default",
+                    this.getConfig("job.defaultAllocation", "PT2050-DataX"))));
+    }
+
+    getDefaultQueue(imagesCount = null){
+        const configuredQueue = this.getConfig("system.logicalQueue", "");
+        if (configuredQueue) return configuredQueue;
+
+        const props = imagesCount !== null ? (this.getJobPropertiesFor(imagesCount) || {}) : {};
+        return props.logicalQueue || "vm-small";
+    }
+
+    getDefaultMaxMinutes(imagesCount = null){
+        const props = imagesCount !== null ? (this.getJobPropertiesFor(imagesCount) || {}) : {};
+        const configuredTime = props.maxJobTime || this.getConfig("job.maxJobTime", "01:00:00");
+        return this.normalizeMaxMinutes(configuredTime, 60);
+    }
+
+    normalizeMaxMinutes(value, fallbackMinutes){
+        let minutes;
+
+        if (typeof value === 'string' && value.indexOf(':') !== -1) {
+            minutes = this.parseJobTime(value);
+        } else if (value !== undefined && value !== null && value !== '') {
+            minutes = parseInt(value, 10);
+        }
+
+        if (!Number.isFinite(minutes) || minutes <= 0) minutes = fallbackMinutes;
+        minutes = Math.max(1, Math.min(2880, minutes));
+        return minutes;
+    }
+
+    normalizeQueueFilter(value){
+        if (!value) return [];
+        if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed) return [];
+            try {
+                const parsed = JSON.parse(trimmed);
+                if (Array.isArray(parsed)) return this.normalizeQueueFilter(parsed);
+            } catch (_) {
+                // Treat as comma-separated below.
+            }
+            return trimmed.split(',').map(v => v.trim()).filter(Boolean);
+        }
+        return [];
+    }
+
+    async getQueueOptions(token){
+        const now = Date.now();
+        if (this.appQueueCache &&
+            (now - this.appQueueCache.timestamp) < 5 * 60 * 1000 &&
+            (this.appQueueCache.source === 'app' || !token)) {
+            return this.appQueueCache.queues;
+        }
+
+        let queues = this.normalizeQueueFilter(this.getConfig("system.queueFilter", []));
+        let source = 'config';
+
+        if (token) {
+            try {
+                const client = this.createApiClient(token);
+                const appId = this.getConfig("app.appId");
+                const appVersion = this.getConfig("app.appVersion");
+                const response = await client.get(`/v3/apps/${appId}-${appVersion}`);
+                const app = response.data && response.data.result ? response.data.result : {};
+                const notes = typeof app.notes === 'string' ? JSON.parse(app.notes) : (app.notes || {});
+                const appQueues = this.normalizeQueueFilter(notes.queueFilter || notes.queues || notes.logicalQueues);
+                if (appQueues.length > 0) {
+                    queues = appQueues;
+                    source = 'app';
+                }
+            } catch (e) {
+                logger.warn(`[TAPIS DEBUG] Could not read Tapis app queueFilter; using configured queue defaults: ${e.message}`);
+            }
+        }
+
+        const defaultQueue = this.getDefaultQueue();
+        if (defaultQueue && queues.indexOf(defaultQueue) === -1) queues.unshift(defaultQueue);
+        queues = [...new Set(queues)];
+
+        this.appQueueCache = {
+            timestamp: now,
+            source,
+            queues
+        };
+        return queues;
+    }
+
+    async getClusterOptions(token){
+        const defaultQueue = this.getDefaultQueue();
+        const queues = await this.getQueueOptions(token);
+        const maxMinutes = this.getDefaultMaxMinutes();
+
+        return [
+            {
+                name: "tapis-queue",
+                label: "Queue",
+                type: "enum",
+                value: defaultQueue,
+                domain: queues.length > 0 ? queues : [defaultQueue],
+                help: "TACC logical queue for the Tapis job."
+            },
+            {
+                name: "tapis-allocation",
+                label: "Allocation",
+                type: "string",
+                value: this.getConfiguredDefaultAllocation(),
+                domain: "",
+                help: "TACC allocation charge code for the Tapis job."
+            },
+            {
+                name: "tapis-max-run-time",
+                label: "Max Run Time",
+                type: "int",
+                value: `${maxMinutes}`,
+                domain: "integer: 1 <= x <= 2880",
+                help: "Maximum Tapis job runtime in minutes. Maximum is 2880 minutes."
+            }
+        ];
+    }
+
+    getEffectiveQueue(taskOptions, imagesCount = null){
+        const selectedQueue = tapisTaskOptions.getTaskOption(taskOptions, 'tapis-queue');
+        if (selectedQueue !== null && selectedQueue !== undefined && String(selectedQueue).trim() !== '') {
+            return String(selectedQueue).trim();
+        }
+        return this.getDefaultQueue(imagesCount);
+    }
+
+    getEffectiveMaxMinutes(taskOptions, imagesCount = null){
+        const defaultMinutes = this.getDefaultMaxMinutes(imagesCount);
+        const selectedMinutes = tapisTaskOptions.getTaskOption(taskOptions, 'tapis-max-run-time');
+        return this.normalizeMaxMinutes(selectedMinutes, defaultMinutes);
+    }
+
+    getEffectiveAllocation(taskOptions){
+        const selectedAllocation = tapisTaskOptions.getTaskOption(taskOptions, 'tapis-allocation');
+        if (selectedAllocation !== null && selectedAllocation !== undefined && String(selectedAllocation).trim() !== '') {
+            return String(selectedAllocation).trim();
+        }
+        return this.getConfiguredDefaultAllocation();
     }
 
     getActiveJobStatuses(){
@@ -582,8 +732,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const jobProps = plan.jobProps || {};
         const defaultCores = this.getConfig("job.coresPerNode", 1);
         const defaultMemory = this.getConfig("job.memoryMB", 4096);
-        const defaultJobTime = this.getConfig("job.maxJobTime", "01:00:00");
-        const logicalQueue = jobProps.logicalQueue || this.getConfig("system.logicalQueue", "vm-small");
+        const logicalQueue = this.getEffectiveQueue(taskOptions, imagesCount);
+        const allocation = this.getEffectiveAllocation(taskOptions);
+        const maxMinutes = this.getEffectiveMaxMinutes(taskOptions, imagesCount);
 
         const requestedNodeCount = plan.requestedNodeCount;
         const nodesToSubmit = plan.nodesToSubmit;
@@ -596,7 +747,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             logger.warn(`[TAPIS DEBUG] Requested ${requestedNodeCount} compute node(s) but configuration limits to ${maxNodesPerJob}; job will reserve ${nodesForJob}`);
         }
 
-        logger.info(`[TAPIS DEBUG] Submission plan: totalNodeODM=${nodesToSubmit}, tapisJobs=${jobsToSubmit}, nodesPerJob=${nodesForJob}, requestedNodeCount=${requestedNodeCount}, maxNodesPerJob=${maxNodesPerJob}, queue=${logicalQueue}`);
+        logger.info(`[TAPIS DEBUG] Submission plan: totalNodeODM=${nodesToSubmit}, tapisJobs=${jobsToSubmit}, nodesPerJob=${nodesForJob}, requestedNodeCount=${requestedNodeCount}, maxNodesPerJob=${maxNodesPerJob}, queue=${logicalQueue}, allocation=${allocation}, maxMinutes=${maxMinutes}`);
 
         const submittedJobs = [];
 
@@ -620,7 +771,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     nodeCount: nodesForJob,
                     coresPerNode: jobProps.coresPerNode || defaultCores || 1,
                     memoryMB: jobProps.memoryMB || defaultMemory || 4096,
-                    maxMinutes: this.parseJobTime(jobProps.maxJobTime || defaultJobTime || "01:00:00"),
+                    maxMinutes,
                     archiveOnAppError: this.getConfig("job.archiveOnAppError", true),
                     parameterSet: {
                         appArgs: [
@@ -629,7 +780,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                             { arg: "https://clusterodm.tacc.utexas.edu", name: "clusterodm_url", description: "ClusterODM URL for registration" }
                         ],
                         schedulerOptions: [
-                            { arg: `-A PT2050-DataX`, name: "TACC Allocation", description: "The TACC allocation associated with this job execution" }
+                            { arg: `-A ${allocation}`, name: "TACC Allocation", description: "The TACC allocation associated with this job execution" }
                         ],
                         envVariables: [
                             { key: "NODEODM_REPLICAS_PER_JOB", value: `${replicasForJob}` },
@@ -732,6 +883,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
     // Parse job time format (HH:MM:SS) to minutes
     parseJobTime(timeStr){
+        if (typeof timeStr === 'number') return Math.ceil(timeStr);
+        if (!timeStr || typeof timeStr !== 'string') return 0;
         const parts = timeStr.split(':');
         const hours = parseInt(parts[0]) || 0;
         const minutes = parseInt(parts[1]) || 0;
@@ -864,6 +1017,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
             // Store pending task data for when NodeODM registers (keep files local)
             const clusterTaskUuid = clusterTaskId || require('crypto').randomUUID();
+            const effectiveQueue = this.getEffectiveQueue(taskOptions, imagesCount);
+            const nodeTaskOptions = tapisTaskOptions.applyGpuQueuePolicy(taskOptions, effectiveQueue);
 
             // Mark tmp directory as protected from cleanup (if tmpPath exists)
             if (tmpPath) {
@@ -888,7 +1043,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 clusterTaskId: clusterTaskUuid,
                 jobId,
                 imagesCount,
-                taskOptions,
+                taskOptions: nodeTaskOptions,
+                tapisOptions: taskOptions,
                 fileNames,
                 tmpPath,
                 token,

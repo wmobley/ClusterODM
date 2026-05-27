@@ -21,6 +21,7 @@ const statusCodes = require('../statusCodes');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const tapisTaskOptions = require('../tapisTaskOptions');
 
 module.exports = class TapisNode extends Node{
     constructor(jobId, token, tapisProvider){
@@ -186,9 +187,13 @@ module.exports = class TapisNode extends Node{
 
     // Store task data to be sent when node comes online
     setPendingTaskData(imagesCount, taskOptions, fileNames, tmpPath){
+        const effectiveQueue = this.tapisProvider && typeof this.tapisProvider.getEffectiveQueue === 'function'
+            ? this.tapisProvider.getEffectiveQueue(taskOptions, imagesCount)
+            : null;
         this.pendingTaskData = {
             imagesCount,
-            taskOptions,
+            taskOptions: tapisTaskOptions.applyGpuQueuePolicy(taskOptions, effectiveQueue),
+            tapisOptions: taskOptions,
             fileNames,
             tmpPath,
             taskId: require('crypto').randomUUID()

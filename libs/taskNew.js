@@ -33,6 +33,7 @@ const asrProvider = require('./asrProvider');
 const logger = require('./logger');
 const splitLogger = require('./splitLogger');
 const events = require('events');
+const tapisTaskOptions = require('./tapisTaskOptions');
 
 const TMP_ROOT = utils.tmpRoot ? utils.tmpRoot() : path.join(process.cwd(), 'tmp');
 
@@ -1379,6 +1380,12 @@ module.exports = {
             let taskOptions = odmOptions.filterOptions(this.augmentTaskOptions(req, options, limits, token, imagesCount),
                                                         await getLimitedOptions(token, limits, node));
 
+            const provider = asrProvider.get();
+            const effectiveTapisQueue = provider && typeof provider.getEffectiveQueue === 'function'
+                ? provider.getEffectiveQueue(taskOptions, imagesCount)
+                : null;
+            const nodeTaskOptions = tapisTaskOptions.applyGpuQueuePolicy(taskOptions, effectiveTapisQueue);
+
             const dateC = dateCreated !== null ? new Date(dateCreated) : new Date();
             const name = taskName || "Task of " + (dateC).toISOString();
 
@@ -1474,7 +1481,7 @@ module.exports = {
             const forwardPathToNode = async (nodeObj, translatedPath) => {
                 const form = new FormData();
                 form.append('name', name);
-                form.append('options', JSON.stringify(taskOptions));
+                form.append('options', JSON.stringify(nodeTaskOptions));
                 form.append('import_path', translatedPath);
 
                 const token = nodeObj.getToken ? nodeObj.getToken() : null;
@@ -1504,7 +1511,7 @@ module.exports = {
                     });
                     body.push({
                         name: 'options',
-                        contents: JSON.stringify(taskOptions)
+                        contents: JSON.stringify(nodeTaskOptions)
                     });
                     body.push({
                         name: 'dateCreated',
@@ -1722,7 +1729,7 @@ module.exports = {
                 try{
                     dmHostname = asr.generateHostname(imagesCount);
                     logger.info(`[TAPIS DEBUG] Generated hostname: ${dmHostname}, calling asr.createNode`);
-                    node = await asr.createNode(req, imagesCount, token, dmHostname, status, options, fileNames, tmpPath, uuid, pathImport);
+                    node = await asr.createNode(req, imagesCount, token, dmHostname, status, taskOptions, fileNames, tmpPath, uuid, pathImport);
                     logger.info(`[TAPIS DEBUG] Node created successfully: ${node ? node.constructor.name : 'null'}`);
                     
                     // Debug: Check if files still exist after node creation
