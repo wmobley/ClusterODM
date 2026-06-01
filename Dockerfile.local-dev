@@ -1,0 +1,31 @@
+FROM node:20-bullseye
+
+LABEL maintainer="Local development"
+
+EXPOSE 3000
+
+USER root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        telnet \
+        build-essential \
+        python3 \
+        libcurl4-openssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir /var/www
+WORKDIR "/var/www"
+
+COPY --chown=node:node . /var/www
+
+RUN npm install
+
+RUN chown -R node:node /var/www
+
+USER node
+
+VOLUME ["/var/www/data"]
+ENTRYPOINT ["/usr/local/bin/node", "/var/www/index.js"]
