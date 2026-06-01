@@ -22,6 +22,9 @@ const fs = require('fs');
 const path = require('path');
 const TapisNode = require('../classes/TapisNode');
 const tapisTaskOptions = require('../tapisTaskOptions');
+const routetable = require('../routetable');
+const tasktable = require('../tasktable');
+const statusCodes = require('../statusCodes');
 
 function getTaskOption(taskOptions, name) {
     if (!Array.isArray(taskOptions)) return null;
@@ -75,6 +78,11 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 "coresPerNode": 1,
                 "memoryMB": 4096,
                 "archiveOnAppError": true
+            },
+            "checkpoint": {
+                "root": "/corral/webodm/media/.nodeodm-checkpoints",
+                "nodeRoot": "/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media/.nodeodm-checkpoints",
+                "intervalSeconds": 900
             },
             "maxRuntime": -1,
             "maxUploadTime": 3600,
@@ -725,7 +733,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     }
 
     // Submit Tapis job without input data - starts NodeODM instance
-    async submitJobWithoutData(token, jobId, imagesCount, taskOptions, submissionPlan = null){
+    async submitJobWithoutData(token, jobId, imagesCount, taskOptions, submissionPlan = null, extraEnvVariables = []){
         const client = this.createApiClient(token);
 
         const plan = submissionPlan || this.calculateNodeSubmissionPlan(imagesCount);
@@ -787,7 +795,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                             { key: "NODEODM_TOTAL_VIRTUAL_NODES", value: `${totalWorkerNodes}` },
                             { key: "NODEODM_JOB_INDEX", value: `${jobIndex}` },
                             { key: "NODEODM_JOB_COUNT", value: `${jobsToSubmit}` }
-                        ]
+                        ].concat(extraEnvVariables)
                     },
                     // No fileInputs - NodeODM will start and wait for data from ClusterODM
                     subscriptions: [{
@@ -938,6 +946,169 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
     // Store pending tasks waiting for NodeODM registration
     pendingTasks = new Map();
+
+    _assertTaskUuid(taskId){
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(taskId || '')){
+            throw new Error(`Invalid task UUID for checkpoint resume: ${taskId || ''}`);
+        }
+    }
+
+    getCheckpointRoot(){
+        return this.getConfig("checkpoint.root", "/corral/webodm/media/.nodeodm-checkpoints");
+    }
+
+    getNodeCheckpointRoot(){
+        return this.getConfig("checkpoint.nodeRoot", this.getCheckpointRoot());
+    }
+
+    getCheckpointIntervalSeconds(){
+        return parseInt(this.getConfig("checkpoint.intervalSeconds", 900), 10) || 900;
+    }
+
+    getCheckpointDir(taskId, nodePath = false){
+        this._assertTaskUuid(taskId);
+        const root = nodePath ? this.getNodeCheckpointRoot() : this.getCheckpointRoot();
+        return path.join(root, taskId);
+    }
+
+    readCheckpointManifest(taskId){
+        const checkpointDir = this.getCheckpointDir(taskId, false);
+        const manifestPath = path.join(checkpointDir, 'manifest.json');
+        const dataDir = path.join(checkpointDir, 'data', taskId);
+
+        if (fs.existsSync(manifestPath)){
+            try {
+                const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+                return { manifest, checkpointDir, manifestPath };
+            } catch (e) {
+                throw new Error(`Checkpoint manifest is invalid for ${taskId}: ${e.message}`);
+            }
+        }
+
+        if (fs.existsSync(dataDir)){
+            return { manifest: {}, checkpointDir, manifestPath: null };
+        }
+
+        throw new Error(`No checkpoint found for task ${taskId} at ${checkpointDir}`);
+    }
+
+    normalizeTaskOptions(options){
+        if (typeof options === 'string'){
+            try {
+                options = JSON.parse(options);
+            } catch (_e) {
+                options = [];
+            }
+        }
+
+        if (!Array.isArray(options)) return [];
+        return options.filter(opt => opt && typeof opt === 'object' && opt.name);
+    }
+
+    async resumeTaskFromCheckpoint({ taskId, token, taskOptions = [], imagesCount = null, pathImport = null }){
+        this._assertTaskUuid(taskId);
+        if (!token || token === 'missing') {
+            throw new Error('Tapis JWT token must be provided to resume a checkpointed task');
+        }
+
+        await this.validateToken(token);
+
+        const { manifest, checkpointDir } = this.readCheckpointManifest(taskId);
+        const normalizedOptions = this.normalizeTaskOptions(taskOptions.length ? taskOptions : (manifest.options || []));
+        const nodeTaskOptions = tapisTaskOptions.applyGpuQueuePolicy(
+            normalizedOptions,
+            this.getEffectiveQueue(normalizedOptions, imagesCount || manifest.imagesCount || 1)
+        );
+        const resolvedImagesCount = parseInt(imagesCount || manifest.imagesCount || 1, 10) || 1;
+        const resolvedPathImport = pathImport || manifest.importPath || manifest.pathImport || null;
+
+        const jobId = `${this.generateHostname(resolvedImagesCount)}-resume`;
+        const checkpointNodeDir = this.getCheckpointDir(taskId, true);
+        const extraEnvVariables = [
+            { key: "NODEODM_CHECKPOINT_ROOT", value: this.getNodeCheckpointRoot() },
+            { key: "NODEODM_CHECKPOINT_INTERVAL_SECONDS", value: `${this.getCheckpointIntervalSeconds()}` },
+            { key: "NODEODM_RESUME_TASK_UUID", value: taskId },
+            { key: "NODEODM_RESUME_CHECKPOINT_PATH", value: checkpointNodeDir },
+            { key: "NODEODM_RESUME_OPTIONS_JSON", value: JSON.stringify(nodeTaskOptions) }
+        ];
+
+        logger.info(`[TAPIS DEBUG] Resuming checkpointed task ${taskId} from ${checkpointDir} using job ${jobId}`);
+
+        const submissionPlan = this.calculateNodeSubmissionPlan(resolvedImagesCount);
+        const nodesReserved = submissionPlan.nodesToSubmit || 1;
+        const jobsToSubmit = submissionPlan.jobsToSubmit || nodesReserved;
+
+        this.nodesPendingCreation += nodesReserved;
+        try {
+            const machineLimit = this.getMachinesLimit();
+            if (machineLimit !== -1) {
+                const activeJobCount = await this.countActiveJobsForToken(token);
+                if ((activeJobCount + jobsToSubmit) > machineLimit) {
+                    throw new Error(`Job limit reached (${machineLimit}). Active: ${activeJobCount}, requested: ${jobsToSubmit}`);
+                }
+            }
+
+            const submissionResult = await this.submitJobWithoutData(
+                token,
+                jobId,
+                resolvedImagesCount,
+                normalizedOptions,
+                submissionPlan,
+                extraEnvVariables
+            );
+            const tapisJobId = submissionResult.primaryJobId;
+
+            this.pendingTasks.set(tapisJobId, {
+                taskId,
+                clusterTaskId: taskId,
+                jobId,
+                imagesCount: resolvedImagesCount,
+                taskOptions: nodeTaskOptions,
+                tapisOptions: normalizedOptions,
+                fileNames: [],
+                tmpPath: null,
+                token,
+                tapisJobId,
+                nodeUser: null,
+                req: null,
+                pathImport: resolvedPathImport,
+                checkpointResume: true,
+                checkpointDir,
+                checkpointNodeDir,
+                submittedJobs: submissionResult.submittedJobs,
+                nodesPerJob: submissionResult.nodesPerJob || submissionPlan.nodesForJob || 1,
+                totalWorkerNodes: submissionResult.totalWorkerNodes || submissionPlan.totalWorkerNodes || nodesReserved
+            });
+
+            await routetable.remove(taskId);
+            await tasktable.add(taskId, {
+                taskInfo: {
+                    uuid: taskId,
+                    name: manifest.name || `checkpoint_resume_${taskId}`,
+                    dateCreated: Date.now(),
+                    status: { code: statusCodes.RUNNING },
+                    options: normalizedOptions,
+                    imagesCount: resolvedImagesCount,
+                    progress: manifest.progress || 0
+                },
+                output: [`Restoring checkpoint from ${checkpointDir}`],
+                importPath: resolvedPathImport,
+                checkpointResume: true
+            }, token);
+
+            logger.info(`[TAPIS DEBUG] Submitted checkpoint resume job ${tapisJobId} for task ${taskId}`);
+            return {
+                success: true,
+                uuid: taskId,
+                tapisJobId,
+                checkpointDir,
+                checkpointNodeDir,
+                submittedJobs: submissionResult.submittedJobs
+            };
+        } finally {
+            this.nodesPendingCreation -= nodesReserved;
+        }
+    }
 
     // Override createNode to just submit Tapis job and wait for NodeODM registration
     async createNode(req, imagesCount, token, hostname, status, taskOptions, fileNames, tmpPath, clusterTaskId = null, pathImport = null){

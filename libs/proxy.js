@@ -913,13 +913,79 @@ module.exports = {
                     // Lookup task id from body
                     let taskId = null;
                     let body = await getReqBody(req);
+                    let actionPayload = {};
+
+                    const writeJson = (statusCode, payload) => {
+                        res.writeHead(statusCode, {"Content-Type": "application/json"});
+                        res.end(JSON.stringify(payload));
+                    };
+
+                    const parseRestartOptions = (value) => {
+                        if (!value) return [];
+                        let parsed = value;
+                        if (typeof parsed === 'string'){
+                            try {
+                                parsed = JSON.parse(parsed);
+                            } catch (_e) {
+                                return [];
+                            }
+                        }
+                        if (Array.isArray(parsed)) return parsed;
+                        if (typeof parsed === 'object'){
+                            return Object.keys(parsed).map(name => ({ name, value: parsed[name] }));
+                        }
+                        return [];
+                    };
+
+                    const tryCheckpointResume = async (routeEntry, taskTableEntry) => {
+                        const provider = asrProvider.get();
+                        if (!provider || typeof provider.resumeTaskFromCheckpoint !== 'function'){
+                            writeJson(404, { error: `Action not supported. Please create a new task.` });
+                            return;
+                        }
+
+                        const routeToken = routeEntry && routeEntry.token ? routeEntry.token : null;
+                        const resumeToken = query.token || routeToken;
+                        const taskInfo = taskTableEntry && taskTableEntry.taskInfo ? taskTableEntry.taskInfo : {};
+                        const optionsFromRequest = parseRestartOptions(actionPayload.options);
+                        const taskOptions = optionsFromRequest.length ? optionsFromRequest : (taskInfo.options || []);
+                        const imagesCount = parseInt(actionPayload.imagesCount || taskInfo.imagesCount || 1, 10) || 1;
+                        const pathImport = actionPayload.import_path || actionPayload.importPath || (taskTableEntry && taskTableEntry.importPath) || null;
+
+                        try {
+                            const resume = await provider.resumeTaskFromCheckpoint({
+                                taskId,
+                                token: resumeToken,
+                                taskOptions,
+                                imagesCount,
+                                pathImport
+                            });
+                            writeJson(200, Object.assign({ success: true, checkpointResume: true }, resume));
+                        } catch (e) {
+                            const isMissingCheckpoint = /No checkpoint found/.test(e.message || '');
+                            logger.warn(`[TAPIS DEBUG] Checkpoint resume failed for ${taskId}: ${e.message}`);
+                            writeJson(isMissingCheckpoint ? 404 : 500, { error: e.message });
+                        }
+                    };
 
                     const handleTaskAction = async () => {
                         if (taskId){
                             concurrencyMonitor.decreaseCount(query.token);
 
-                            let node = await routetable.lookupNode(taskId);
-                            if (node){
+                            const routeEntry = await routetable.lookup(taskId);
+                            let node = routeEntry ? routeEntry.node : null;
+                            if (pathname === '/task/restart' && node && typeof node.isOnline === 'function' && !node.isOnline()){
+                                try {
+                                    await node.updateInfo();
+                                } catch (_e) {
+                                    // updateInfo records the failure on the node; resume fallback below will handle it.
+                                }
+                            }
+
+                            const nodeOnline = node && typeof node.isOnline === 'function' ? node.isOnline() : !!node;
+                            const canProxyToNode = node && (pathname !== '/task/restart' || nodeOnline);
+
+                            if (canProxyToNode){
                                 overrideRequest(req, node, query, pathname);
                                 proxy.web(req, res, { 
                                         target: node.proxyTargetUrl(),
@@ -927,6 +993,11 @@ module.exports = {
                                     });
                             }else{
                                 const taskTableEntry = await tasktable.lookup(taskId);
+                                if (pathname === '/task/restart'){
+                                    await tryCheckpointResume(routeEntry, taskTableEntry);
+                                    return;
+                                }
+
                                 if (taskTableEntry && taskTableEntry.taskInfo){
                                     if (pathname === '/task/cancel' || pathname === '/task/remove'){
                                         if (taskTableEntry.abort){
@@ -951,11 +1022,11 @@ module.exports = {
                                         json(res, { error: `Action not supported. Please create a new task.` });
                                     }
                                 }else{
-                                    json(res, { error: `Invalid route for taskId ${taskId}, no nodes in routing table.`});
+                                    writeJson(404, { error: `Invalid route for taskId ${taskId}, no nodes in routing table.`});
                                 }
                             }
                         }else{
-                            json(res, { error: `No uuid found in ${pathname}`});
+                            writeJson(400, { error: `No uuid found in ${pathname}`});
                         }
                     };
 
@@ -963,6 +1034,7 @@ module.exports = {
                     if (contentType.includes('application/json')){
                         try{
                             const parsed = JSON.parse(body || '{}');
+                            actionPayload = parsed;
                             taskId = parsed.uuid || parsed.taskId || null;
                         }catch(e){
                             logger.warn(`[TAPIS DEBUG] Failed to parse JSON body for ${pathname}: ${e.message}`);
@@ -974,6 +1046,7 @@ module.exports = {
                     try{
                         const busboy = new Busboy({ headers: req.headers });
                         busboy.on('field', function(fieldname, val, fieldnameTruncated, valTruncated) {
+                            actionPayload[fieldname] = val;
                             if (fieldname === 'uuid'){
                                 taskId = val;
                             }

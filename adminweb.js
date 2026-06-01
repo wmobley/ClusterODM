@@ -672,7 +672,9 @@ module.exports = {
         workerId,
         jobIndex,
         jobCount,
-        replicasPerJob
+        replicasPerJob,
+        checkpointResume,
+        resumeTaskUuid
       } = req.body;
 
       // Extract Tapis JWT token from Authorization header (Bearer token)
@@ -704,7 +706,9 @@ module.exports = {
         workerId: workerId !== undefined ? workerId : null,
         jobIndex: jobIndex !== undefined ? jobIndex : null,
         jobCount: jobCount !== undefined ? jobCount : null,
-        replicasPerJob: replicasPerJob !== undefined ? replicasPerJob : null
+        replicasPerJob: replicasPerJob !== undefined ? replicasPerJob : null,
+        checkpointResume: !!checkpointResume,
+        resumeTaskUuid: resumeTaskUuid || null
       };
 
       if (tapisJobUuid) {
@@ -1035,6 +1039,41 @@ module.exports = {
             if (node) {
               Object.assign(node.nodeData, registrationMeta, { nodeReady: !!nodeReady });
               logger.info(`Registered NodeODM ${hostname}:${port} for pending Tapis task`);
+
+              if (pendingTask.checkpointResume) {
+                const effectiveUuid = pendingTask.clusterTaskId || pendingTask.taskId || resumeTaskUuid || null;
+                if (!effectiveUuid) {
+                  logger.error(`[TAPIS DEBUG] Checkpoint resume registration missing task UUID for Tapis job ${tapisJobUuid}`);
+                  provider.pendingTasks.set(tapisJobUuid, pendingTask);
+                  return res.status(500).json({ success: false, error: "Checkpoint resume missing task UUID" });
+                }
+
+                try {
+                  node.currentTask = effectiveUuid;
+                  if (pendingTask.token) {
+                    await routetable.add(effectiveUuid, node, pendingTask.token);
+                    await tasktable.delete(effectiveUuid);
+                    logger.info(`[TAPIS DEBUG] Wired checkpoint-resumed task ${effectiveUuid} to NodeODM ${hostname}:${port}`);
+                  } else {
+                    logger.warn(`[TAPIS DEBUG] Checkpoint resume task ${effectiveUuid} missing route token; route table not updated`);
+                  }
+
+                  res.json({
+                    success: true,
+                    message: "NodeODM registered for checkpoint resume",
+                    nodeId: nodes.all().indexOf(node) + 1,
+                    tapisJobUuid: tapisJobUuid,
+                    taskUuid: effectiveUuid,
+                    checkpointResume: true,
+                    authMethod: registrationUuid ? "uuid" : (tapisJobOwner ? "tapis-user-id" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret"))
+                  });
+                  return;
+                } catch (routeErr) {
+                  logger.error(`[TAPIS DEBUG] Failed to wire checkpoint resume task ${effectiveUuid}: ${routeErr.message}`);
+                  provider.pendingTasks.set(tapisJobUuid, pendingTask);
+                  return res.status(500).json({ success: false, error: routeErr.message });
+                }
+              }
 
               // Create and submit the task to this real node
               setTimeout(async () => {
