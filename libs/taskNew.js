@@ -1494,6 +1494,17 @@ module.exports = {
                 form.append('name', name);
                 form.append('options', JSON.stringify(nodeTaskOptions));
                 form.append('import_path', translatedPath);
+                form.append('dateCreated', dateC.getTime().toString());
+                if (skipPostProcessing){
+                    form.append('skipPostProcessing', 'true');
+                }
+                if (webhook){
+                    form.append('webhook', webhook);
+                }
+                if (outputs){
+                    logger.info(`[TAPIS DEBUG] Forwarding outputs for path-based task ${uuid} (${name}) to node ${nodeObj}: ${outputs}`);
+                    form.append('outputs', outputs);
+                }
 
                 const token = nodeObj.getToken ? nodeObj.getToken() : null;
                 const nodeUrl = `${nodeObj.proxyTargetUrl()}/task/new${token ? `?token=${token}` : ''}`;
