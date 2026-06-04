@@ -63,6 +63,8 @@ The `imageSizeMapping` array defines resource allocation based on the number of 
     {
         "maxImages": 50,
         "jobCount": 1,
+        "nodeCount": 1,
+        "logicalQueue": "vm-small",
         "coresPerNode": 2,
         "memoryMB": 8192,
         "maxJobTime": "02:00:00"
@@ -70,7 +72,8 @@ The `imageSizeMapping` array defines resource allocation based on the number of 
 ]
 ```
 
-- `jobCount` controls how many Tapis jobs are submitted in parallel for datasets up to `maxImages`. Each job uses the global `job.nodeCount` (or an optional `computeNodeCount` override) to size the Tapis allocation.
+- `logicalQueue`, `nodeCount`, and `maxJobTime` set the default WebODM Tapis queue, number of Tapis compute nodes, and max runtime for datasets up to `maxImages`.
+- `jobCount` controls how many Tapis jobs are submitted in parallel for datasets up to `maxImages`. Each job uses the mapped `nodeCount` (or an optional `computeNodeCount` override) to size the Tapis allocation.
 - When split-merge processing is enabled (default), ClusterODM automatically sets the ODM `--split` option so that each Tapis job handles roughly `images / jobCount` images, ensuring submodels are distributed across the available nodes.
 
 ## WebODM Task Options
@@ -80,8 +83,9 @@ ClusterODM exposes these Tapis-specific options through `/options`:
 - `tapis-queue`: Queue choices come from the Tapis app `notes.queueFilter`, falling back to `system.queueFilter`.
 - `tapis-allocation`: TACC allocation charge code. WebODM populates this from TAS using service credentials.
 - `tapis-max-run-time`: Runtime in minutes, capped at 2880 minutes.
+- `tapis-node`: Number of Tapis compute nodes to request, capped by `job.maxNodesPerJob`.
 
-These options are used only to build the Tapis job submission. They are stripped before the ODM task is forwarded to NodeODM. When a selected queue starts with `gpu-`, ClusterODM forces ODM `no-gpu` to `false` so GPU acceleration is not disabled on GPU queues.
+Queue, max runtime, and node-count defaults include image-count metadata from `imageSizeMapping`, so WebODM can preselect values based on the number of uploaded photos. These options are used only to build the Tapis job submission. They are stripped before the ODM task is forwarded to NodeODM. When a selected queue starts with `gpu-`, ClusterODM forces ODM `no-gpu` to `false` so GPU acceleration is not disabled on GPU queues.
 
 ## Usage
 

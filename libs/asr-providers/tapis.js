@@ -213,10 +213,12 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     }
 
     getDefaultQueue(imagesCount = null){
+        const props = imagesCount !== null ? (this.getJobPropertiesFor(imagesCount) || {}) : {};
+        if (props.logicalQueue) return props.logicalQueue;
+
         const configuredQueue = this.getConfig("system.logicalQueue", "");
         if (configuredQueue) return configuredQueue;
 
-        const props = imagesCount !== null ? (this.getJobPropertiesFor(imagesCount) || {}) : {};
         return props.logicalQueue || "vm-small";
     }
 
@@ -238,6 +240,61 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         if (!Number.isFinite(minutes) || minutes <= 0) minutes = fallbackMinutes;
         minutes = Math.max(1, Math.min(2880, minutes));
         return minutes;
+    }
+
+    getDefaultNodeCount(imagesCount = null){
+        const props = imagesCount !== null ? (this.getJobPropertiesFor(imagesCount) || {}) : {};
+        const configuredNodeCount = this.getConfig("job.nodeCount", 1);
+        return this.normalizeNodeCount(props.computeNodeCount ?? props.nodeCount, configuredNodeCount);
+    }
+
+    getMaxNodesPerJob(){
+        const maxNodesPerJobRaw = this.getConfig("job.maxNodesPerJob", 1);
+        return Math.max(1, parseInt(maxNodesPerJobRaw, 10) || 1);
+    }
+
+    normalizeNodeCount(value, fallbackCount){
+        let nodeCount;
+        if (value !== undefined && value !== null && value !== '') {
+            nodeCount = parseInt(value, 10);
+        }
+
+        const fallback = parseInt(fallbackCount, 10) || 1;
+        if (!Number.isFinite(nodeCount) || nodeCount <= 0) nodeCount = fallback;
+        return Math.max(1, Math.min(this.getMaxNodesPerJob(), nodeCount));
+    }
+
+    getImageSizeDefaultMappings(){
+        const mappings = this.getConfig("imageSizeMapping", []);
+        if (!Array.isArray(mappings)) return [];
+
+        return mappings
+            .map(mapping => {
+                const maxImages = parseInt(mapping && mapping.maxImages, 10);
+                if (!Number.isFinite(maxImages) || maxImages <= 0) return null;
+
+                return {
+                    maxImages,
+                    queue: mapping.logicalQueue || null,
+                    maxMinutes: this.normalizeMaxMinutes(mapping.maxJobTime, this.getDefaultMaxMinutes()),
+                    nodeCount: this.normalizeNodeCount(mapping.computeNodeCount ?? mapping.nodeCount, this.getDefaultNodeCount())
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.maxImages - b.maxImages);
+    }
+
+    buildDefaultByImages(field){
+        return this.getImageSizeDefaultMappings()
+            .map(mapping => {
+                const value = mapping[field];
+                if (value === null || value === undefined || value === '') return null;
+                return {
+                    maxImages: mapping.maxImages,
+                    value: `${value}`
+                };
+            })
+            .filter(Boolean);
     }
 
     normalizeQueueFilter(value){
@@ -286,6 +343,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             }
         }
 
+        const mappedQueues = this.buildDefaultByImages('queue').map(mapping => mapping.value);
+        queues = queues.concat(mappedQueues);
+
         const defaultQueue = this.getDefaultQueue();
         if (defaultQueue && queues.indexOf(defaultQueue) === -1) queues.unshift(defaultQueue);
         queues = [...new Set(queues)];
@@ -302,6 +362,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const defaultQueue = this.getDefaultQueue();
         const queues = await this.getQueueOptions(token);
         const maxMinutes = this.getDefaultMaxMinutes();
+        const defaultNodeCount = this.getDefaultNodeCount();
+        const maxNodesPerJob = this.getMaxNodesPerJob();
 
         return [
             {
@@ -310,6 +372,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 type: "enum",
                 value: defaultQueue,
                 domain: queues.length > 0 ? queues : [defaultQueue],
+                defaultByImages: this.buildDefaultByImages('queue'),
                 help: "TACC logical queue for the Tapis job."
             },
             {
@@ -326,7 +389,17 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 type: "int",
                 value: `${maxMinutes}`,
                 domain: "integer: 1 <= x <= 2880",
+                defaultByImages: this.buildDefaultByImages('maxMinutes'),
                 help: "Maximum Tapis job runtime in minutes. Maximum is 2880 minutes."
+            },
+            {
+                name: "tapis-node",
+                label: "Number of Nodes",
+                type: "int",
+                value: `${defaultNodeCount}`,
+                domain: `integer: 1 <= x <= ${maxNodesPerJob}`,
+                defaultByImages: this.buildDefaultByImages('nodeCount'),
+                help: "Number of Tapis compute nodes to request for the job."
             }
         ];
     }
@@ -345,6 +418,12 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return this.normalizeMaxMinutes(selectedMinutes, defaultMinutes);
     }
 
+    getEffectiveNodeCount(taskOptions, imagesCount = null){
+        const defaultNodeCount = this.getDefaultNodeCount(imagesCount);
+        const selectedNodeCount = tapisTaskOptions.getTaskOption(taskOptions, 'tapis-node');
+        return this.normalizeNodeCount(selectedNodeCount, defaultNodeCount);
+    }
+
     getEffectiveAllocation(taskOptions){
         const selectedAllocation = tapisTaskOptions.getTaskOption(taskOptions, 'tapis-allocation');
         if (selectedAllocation !== null && selectedAllocation !== undefined && String(selectedAllocation).trim() !== '') {
@@ -359,14 +438,11 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return new Set(statuses.map(status => String(status || '').toUpperCase()).filter(Boolean));
     }
 
-    calculateNodeSubmissionPlan(imagesCount){
+    calculateNodeSubmissionPlan(imagesCount, taskOptions = []){
         const jobProps = this.getJobPropertiesFor(imagesCount) || {};
-        const defaultNodeCount = this.getConfig("job.nodeCount", 1);
-        const computeNodeCountRaw = jobProps.computeNodeCount ?? jobProps.nodeCount;
-        const requestedNodeCount = Math.max(1, computeNodeCountRaw ?? defaultNodeCount ?? 1);
+        const requestedNodeCount = this.getEffectiveNodeCount(taskOptions, imagesCount);
 
-        const maxNodesPerJobRaw = this.getConfig("job.maxNodesPerJob", 1);
-        const maxNodesPerJob = Math.max(1, parseInt(maxNodesPerJobRaw, 10) || 1);
+        const maxNodesPerJob = this.getMaxNodesPerJob();
         const nodesForJob = Math.max(1, Math.min(requestedNodeCount, maxNodesPerJob));
         const jobCountRaw = jobProps.jobCount ?? 1;
         const nodesToSubmit = Math.max(1, parseInt(jobCountRaw, 10) || 1);
@@ -385,8 +461,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         };
     }
 
-    getRequestedNodeCount(imagesCount){
-        return this.calculateNodeSubmissionPlan(imagesCount).requestedNodeCount;
+    getRequestedNodeCount(imagesCount, taskOptions = []){
+        return this.calculateNodeSubmissionPlan(imagesCount, taskOptions).requestedNodeCount;
     }
 
     // Validate Tapis token
@@ -736,7 +812,11 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     async submitJobWithoutData(token, jobId, imagesCount, taskOptions, submissionPlan = null, extraEnvVariables = []){
         const client = this.createApiClient(token);
 
-        const plan = submissionPlan || this.calculateNodeSubmissionPlan(imagesCount);
+        const selectedNodeCount = tapisTaskOptions.getTaskOption(taskOptions, 'tapis-node');
+        const hasNodeCountOverride = selectedNodeCount !== null && selectedNodeCount !== undefined && String(selectedNodeCount).trim() !== '';
+        const plan = (!submissionPlan || hasNodeCountOverride)
+            ? this.calculateNodeSubmissionPlan(imagesCount, taskOptions)
+            : submissionPlan;
         const jobProps = plan.jobProps || {};
         const defaultCores = this.getConfig("job.coresPerNode", 1);
         const defaultMemory = this.getConfig("job.memoryMB", 4096);
@@ -1034,7 +1114,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
         logger.info(`[TAPIS DEBUG] Resuming checkpointed task ${taskId} from ${checkpointDir} using job ${jobId}`);
 
-        const submissionPlan = this.calculateNodeSubmissionPlan(resolvedImagesCount);
+        const submissionPlan = this.calculateNodeSubmissionPlan(resolvedImagesCount, normalizedOptions);
         const nodesReserved = submissionPlan.nodesToSubmit || 1;
         const jobsToSubmit = submissionPlan.jobsToSubmit || nodesReserved;
 
@@ -1137,7 +1217,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const jobId = hostname; // Use hostname as job identifier
         logger.info(`[TAPIS DEBUG] Submitting Tapis job for ${imagesCount} images with ID ${jobId} (no virtual node)`);
 
-        const submissionPlan = this.calculateNodeSubmissionPlan(imagesCount);
+        const submissionPlan = this.calculateNodeSubmissionPlan(imagesCount, taskOptions);
         const nodesToSubmit = submissionPlan.nodesToSubmit || 1;
         const jobsToSubmit = submissionPlan.jobsToSubmit || nodesToSubmit;
 

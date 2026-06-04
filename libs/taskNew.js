@@ -1010,7 +1010,7 @@ module.exports = {
                 const asr = asrProvider.get();
                 if (asr && typeof asr.calculateNodeSubmissionPlan === 'function') {
                     try {
-                        const plan = asr.calculateNodeSubmissionPlan(imagesCount);
+                        const plan = asr.calculateNodeSubmissionPlan(imagesCount, taskOptions);
                         if (plan) {
                             const concurrencyHint = plan.totalWorkerNodes || plan.nodesToSubmit || plan.nodesForJob;
                             if (concurrencyHint && concurrencyHint > 1) {

@@ -3,7 +3,8 @@
 const TAPIS_OPTION_NAMES = new Set([
     'tapis-queue',
     'tapis-allocation',
-    'tapis-max-run-time'
+    'tapis-max-run-time',
+    'tapis-node'
 ]);
 
 const GPU_QUEUE_PREFIX = /^gpu(?:-|$)/i;
