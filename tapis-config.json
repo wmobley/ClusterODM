@@ -25,6 +25,9 @@
     "archiveOnAppError": true,
     "maxNodesPerJob": 4
   },
+  "nodeodm": {
+    "cleanupTasksAfterMinutes": 0
+  },
   "maxRuntime": 7200,
   "maxUploadTime": 3600,
   "jobLimit": 10,
