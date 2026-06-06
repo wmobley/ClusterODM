@@ -674,7 +674,9 @@ module.exports = {
         jobCount,
         replicasPerJob,
         checkpointResume,
-        resumeTaskUuid
+        resumeTaskUuid,
+        resumeMode,
+        resumeFallbackReason
       } = req.body;
 
       // Extract Tapis JWT token from Authorization header (Bearer token)
@@ -708,7 +710,9 @@ module.exports = {
         jobCount: jobCount !== undefined ? jobCount : null,
         replicasPerJob: replicasPerJob !== undefined ? replicasPerJob : null,
         checkpointResume: !!checkpointResume,
-        resumeTaskUuid: resumeTaskUuid || null
+        resumeTaskUuid: resumeTaskUuid || null,
+        resumeMode: resumeMode || null,
+        resumeFallbackReason: resumeFallbackReason || null
       };
 
       if (tapisJobUuid) {
@@ -1040,7 +1044,7 @@ module.exports = {
               Object.assign(node.nodeData, registrationMeta, { nodeReady: !!nodeReady });
               logger.info(`Registered NodeODM ${hostname}:${port} for pending Tapis task`);
 
-              if (pendingTask.checkpointResume) {
+              if (pendingTask.checkpointResume && resumeMode !== "cold-start") {
                 const effectiveUuid = pendingTask.clusterTaskId || pendingTask.taskId || resumeTaskUuid || null;
                 if (!effectiveUuid) {
                   logger.error(`[TAPIS DEBUG] Checkpoint resume registration missing task UUID for Tapis job ${tapisJobUuid}`);
@@ -1065,6 +1069,8 @@ module.exports = {
                     tapisJobUuid: tapisJobUuid,
                     taskUuid: effectiveUuid,
                     checkpointResume: true,
+                    resumeMode: resumeMode || "restored",
+                    resumeFallbackReason: resumeFallbackReason || null,
                     authMethod: registrationUuid ? "uuid" : (tapisJobOwner ? "tapis-user-id" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret"))
                   });
                   return;

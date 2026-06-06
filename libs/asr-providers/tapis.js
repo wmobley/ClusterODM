@@ -85,7 +85,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             "checkpoint": {
                 "root": "/corral/webodm/media/.nodeodm-checkpoints",
                 "nodeRoot": "/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media/.nodeodm-checkpoints",
-                "intervalSeconds": 900
+                "intervalSeconds": 900,
+                "retentionSeconds": 604800,
+                "scratchRoots": ["/scratch", "/work"]
             },
             "maxRuntime": -1,
             "maxUploadTime": 3600,
@@ -1055,6 +1057,53 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return parseInt(this.getConfig("checkpoint.intervalSeconds", 900), 10) || 900;
     }
 
+    getCheckpointRetentionSeconds(){
+        return parseInt(this.getConfig("checkpoint.retentionSeconds", 604800), 10) || 604800;
+    }
+
+    getCheckpointScratchRoots(){
+        const configured = this.getConfig("checkpoint.scratchRoots", ["/scratch", "/work"]);
+        const roots = Array.isArray(configured) ? configured : String(configured || "").split(/[,:]/);
+        return roots
+            .map(root => String(root || "").trim())
+            .filter(root => root.startsWith("/"))
+            .map(root => path.posix.normalize(root));
+    }
+
+    isAllowedScratchResumePath(rawPath){
+        if (!rawPath || typeof rawPath !== 'string' || !rawPath.startsWith('/') || rawPath.includes('\0')) {
+            return false;
+        }
+
+        const normalized = path.posix.normalize(rawPath);
+        return this.getCheckpointScratchRoots().some(root => {
+            if (!root || root === '/') return false;
+            return normalized === root || normalized.startsWith(`${root.replace(/\/$/, '')}/`);
+        });
+    }
+
+    assertCheckpointOwner(manifest, token){
+        const owner = manifest && manifest.tapisJobOwner ? String(manifest.tapisJobOwner).trim().toLowerCase() : "";
+        if (!owner) return;
+
+        const tokenUser = this.extractUserFromToken(token);
+        if (!tokenUser || !tokenUser.username) return;
+
+        const ownerUser = owner.split('@')[0];
+        const requester = String(tokenUser.username).trim().toLowerCase();
+        if (ownerUser && requester && ownerUser !== requester) {
+            throw new Error(`Checkpoint for task ${manifest.uuid || ''} belongs to ${owner}; requester is ${requester}`);
+        }
+    }
+
+    getManifestScratchTaskDir(manifest){
+        return manifest.scratchTaskDir ||
+            manifest.scratchTaskPath ||
+            manifest.resumeDataPath ||
+            manifest.scratchDataPath ||
+            null;
+    }
+
     getCheckpointDir(taskId, nodePath = false){
         this._assertTaskUuid(taskId);
         const root = nodePath ? this.getNodeCheckpointRoot() : this.getCheckpointRoot();
@@ -1104,6 +1153,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         await this.validateToken(token);
 
         const { manifest, checkpointDir } = this.readCheckpointManifest(taskId);
+        this.assertCheckpointOwner(manifest, token);
+
         const normalizedOptions = this.normalizeTaskOptions(taskOptions.length ? taskOptions : (manifest.options || []));
         const nodeTaskOptions = tapisTaskOptions.applyGpuQueuePolicy(
             normalizedOptions,
@@ -1111,18 +1162,41 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         );
         const resolvedImagesCount = parseInt(imagesCount || manifest.imagesCount || 1, 10) || 1;
         const resolvedPathImport = pathImport || manifest.importPath || manifest.pathImport || null;
+        const scratchTaskDir = this.getManifestScratchTaskDir(manifest);
+        const scratchRuntimeDir = manifest.scratchRuntimeDir || null;
+        const scratchDataDir = manifest.scratchDataDir || null;
+
+        if (scratchTaskDir && !this.isAllowedScratchResumePath(scratchTaskDir)) {
+            throw new Error(`Checkpoint scratch path is outside allowed roots: ${scratchTaskDir}`);
+        }
+        if (scratchRuntimeDir && !this.isAllowedScratchResumePath(scratchRuntimeDir)) {
+            throw new Error(`Checkpoint runtime path is outside allowed roots: ${scratchRuntimeDir}`);
+        }
 
         const jobId = `${this.generateHostname(resolvedImagesCount)}-resume`;
         const checkpointNodeDir = this.getCheckpointDir(taskId, true);
         const extraEnvVariables = [
             { key: "NODEODM_CHECKPOINT_ROOT", value: this.getNodeCheckpointRoot() },
             { key: "NODEODM_CHECKPOINT_INTERVAL_SECONDS", value: `${this.getCheckpointIntervalSeconds()}` },
+            { key: "NODEODM_CHECKPOINT_RETENTION_SECONDS", value: `${this.getCheckpointRetentionSeconds()}` },
+            { key: "NODEODM_CHECKPOINT_COPY_DATA", value: "0" },
             { key: "NODEODM_RESUME_TASK_UUID", value: taskId },
             { key: "NODEODM_RESUME_CHECKPOINT_PATH", value: checkpointNodeDir },
+            { key: "NODEODM_RESUME_IMPORT_PATH", value: resolvedPathImport || "" },
+            { key: "NODEODM_RESUME_ALLOW_COLD_START", value: "1" },
+            { key: "NODEODM_RESUME_ALLOWED_ROOTS", value: this.getCheckpointScratchRoots().join(":") },
             { key: "NODEODM_RESUME_OPTIONS_JSON", value: JSON.stringify(nodeTaskOptions) }
         ];
+        if (scratchTaskDir) {
+            extraEnvVariables.push({ key: "NODEODM_RESUME_DATA_PATH", value: scratchTaskDir });
+        }
+        if (scratchRuntimeDir) {
+            extraEnvVariables.push({ key: "NODEODM_RESUME_RUNTIME_PATH", value: scratchRuntimeDir });
+        } else if (scratchDataDir) {
+            extraEnvVariables.push({ key: "NODEODM_RESUME_RUNTIME_PATH", value: path.posix.dirname(path.posix.normalize(scratchDataDir)) });
+        }
 
-        logger.info(`[TAPIS DEBUG] Resuming checkpointed task ${taskId} from ${checkpointDir} using job ${jobId}`);
+        logger.info(`[TAPIS DEBUG] Resuming checkpointed task ${taskId} from ${checkpointDir} using job ${jobId}; scratchTaskDir=${scratchTaskDir || ''}`);
 
         const submissionPlan = this.calculateNodeSubmissionPlan(resolvedImagesCount, normalizedOptions);
         const nodesReserved = submissionPlan.nodesToSubmit || 1;
@@ -1165,6 +1239,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 checkpointResume: true,
                 checkpointDir,
                 checkpointNodeDir,
+                scratchTaskDir,
+                scratchRuntimeDir,
                 submittedJobs: submissionResult.submittedJobs,
                 nodesPerJob: submissionResult.nodesPerJob || submissionPlan.nodesForJob || 1,
                 totalWorkerNodes: submissionResult.totalWorkerNodes || submissionPlan.totalWorkerNodes || nodesReserved
@@ -1181,7 +1257,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                     imagesCount: resolvedImagesCount,
                     progress: manifest.progress || 0
                 },
-                output: [`Restoring checkpoint from ${checkpointDir}`],
+                output: [`Restoring checkpoint from ${scratchTaskDir || checkpointDir}`],
                 importPath: resolvedPathImport,
                 checkpointResume: true
             }, token);
@@ -1193,6 +1269,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 tapisJobId,
                 checkpointDir,
                 checkpointNodeDir,
+                scratchTaskDir,
+                scratchRuntimeDir,
                 submittedJobs: submissionResult.submittedJobs
             };
         } finally {
