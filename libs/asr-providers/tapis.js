@@ -79,6 +79,9 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                 "memoryMB": 4096,
                 "archiveOnAppError": true
             },
+            "nodeodm": {
+                "cleanupTasksAfterMinutes": 0
+            },
             "checkpoint": {
                 "root": "/corral/webodm/media/.nodeodm-checkpoints",
                 "nodeRoot": "/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media/.nodeodm-checkpoints",
@@ -203,6 +206,11 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
 
     getMaxUploadTime(){
         return this.getConfig("maxUploadTime");
+    }
+
+    getNodeOdmCleanupTasksAfterMinutes(){
+        const parsed = parseInt(this.getConfig("nodeodm.cleanupTasksAfterMinutes", 0), 10);
+        return Number.isFinite(parsed) ? parsed : 0;
     }
 
     getConfiguredDefaultAllocation(){
@@ -823,6 +831,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         const logicalQueue = this.getEffectiveQueue(taskOptions, imagesCount);
         const allocation = this.getEffectiveAllocation(taskOptions);
         const maxMinutes = this.getEffectiveMaxMinutes(taskOptions, imagesCount);
+        const nodeOdmCleanupMinutes = this.getNodeOdmCleanupTasksAfterMinutes();
 
         const requestedNodeCount = plan.requestedNodeCount;
         const nodesToSubmit = plan.nodesToSubmit;
@@ -835,7 +844,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             logger.warn(`[TAPIS DEBUG] Requested ${requestedNodeCount} compute node(s) but configuration limits to ${maxNodesPerJob}; job will reserve ${nodesForJob}`);
         }
 
-        logger.info(`[TAPIS DEBUG] Submission plan: totalNodeODM=${nodesToSubmit}, tapisJobs=${jobsToSubmit}, nodesPerJob=${nodesForJob}, requestedNodeCount=${requestedNodeCount}, maxNodesPerJob=${maxNodesPerJob}, queue=${logicalQueue}, allocation=${allocation}, maxMinutes=${maxMinutes}`);
+        logger.info(`[TAPIS DEBUG] Submission plan: totalNodeODM=${nodesToSubmit}, tapisJobs=${jobsToSubmit}, nodesPerJob=${nodesForJob}, requestedNodeCount=${requestedNodeCount}, maxNodesPerJob=${maxNodesPerJob}, queue=${logicalQueue}, allocation=${allocation}, maxMinutes=${maxMinutes}, nodeOdmCleanupMinutes=${nodeOdmCleanupMinutes}`);
 
         const submittedJobs = [];
 
@@ -874,7 +883,8 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
                             { key: "NODEODM_REPLICAS_PER_JOB", value: `${replicasForJob}` },
                             { key: "NODEODM_TOTAL_VIRTUAL_NODES", value: `${totalWorkerNodes}` },
                             { key: "NODEODM_JOB_INDEX", value: `${jobIndex}` },
-                            { key: "NODEODM_JOB_COUNT", value: `${jobsToSubmit}` }
+                            { key: "NODEODM_JOB_COUNT", value: `${jobsToSubmit}` },
+                            { key: "NODEODM_CLEANUP_MINUTES", value: `${nodeOdmCleanupMinutes}` }
                         ].concat(extraEnvVariables)
                     },
                     // No fileInputs - NodeODM will start and wait for data from ClusterODM
