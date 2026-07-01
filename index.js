@@ -15,6 +15,12 @@
  *  You should have received a copy of the GNU Affero General Public License
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+// Group-writable default so any data ClusterODM writes to shared storage stays g+rw
+// for the allocation group (consistent with the WebODM/NodeODM corral group model).
+// Overridable via the CLUSTERODM_UMASK env var.
+// See docs/design/2026-07-01-corral-ownership-group-inheritance.md (odm-suite)
+process.umask(process.env.CLUSTERODM_UMASK ? parseInt(process.env.CLUSTERODM_UMASK, 8) : 0o002);
+
 const config = require('./config');
 const admincli = require('./admincli');
 const adminweb = require('./adminweb');
