@@ -427,7 +427,7 @@ const ensureSeedZipIntegrity = async (seedPath, tmpPath, uuid, logFn) => {
 // Looks up mappings in config.node_shared_path_mappings or config.NODE_SHARED_PATH_MAPPINGS.
 const FALLBACK_SHARED_PATH_MAPPINGS = {
     '*': {
-        '/corral/webodm/media': '/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media'
+        '/corral/webodm/media': '/corral/utexas/BCS26030/webodm/media'
     }
 };
 const translateImportPathForNode = (importPath, nodeHostname) => {

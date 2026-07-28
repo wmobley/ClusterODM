@@ -84,7 +84,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             },
             "checkpoint": {
                 "root": "/corral/webodm/media/.nodeodm-checkpoints",
-                "nodeRoot": "/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media/.nodeodm-checkpoints",
+                "nodeRoot": "/corral/utexas/BCS26030/webodm/media/.nodeodm-checkpoints",
                 "intervalSeconds": 900,
                 "retentionSeconds": 604800,
                 "scratchRoots": ["/scratch", "/work"]

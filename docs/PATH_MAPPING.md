@@ -3,7 +3,7 @@
 This document explains the `node_shared_path_mappings` configuration and how ClusterODM translates shared filesystem paths (sent by WebODM) into node-local paths for NodeODM instances.
 
 Why this exists
-- In some deployments WebODM and NodeODM share storage but mount it under different absolute paths on different hosts (for example, `/corral/webodm/media` on the web host and `/corral-repl/.../webodm/media` on compute nodes). To avoid uploading images over HTTP, WebODM can send an `import_path` (a directory path) and ClusterODM will translate it for the target node.
+- In some deployments WebODM and NodeODM share storage but mount it under different absolute paths on different hosts (for example, `/corral/webodm/media` on the web host and `/corral/utexas/BCS26030/webodm/media` on compute nodes). To avoid uploading images over HTTP, WebODM can send an `import_path` (a directory path) and ClusterODM will translate it for the target node.
 
 Config location
 - Add mappings to `config-default.json` or your `config.json` (the value is read into `config.node_shared_path_mappings`). Example:
@@ -11,10 +11,10 @@ Config location
 ```json
 "node_shared_path_mappings": {
   "nodeodm-ls6": {
-    "/corral/webodm/media": "/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media"
+    "/corral/webodm/media": "/corral/utexas/BCS26030/webodm/media"
   },
   "*": {
-    "/corral/webodm/media": "/corral-repl/tacc/aci/PT2050/projects/PTDATAX-263/webodm/media"
+    "/corral/webodm/media": "/corral/utexas/BCS26030/webodm/media"
   }
 }
 ```
