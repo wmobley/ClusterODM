@@ -44,6 +44,11 @@ const parseBoolEnv = (envName) => {
     return normalized.length > 0 && normalized !== '0' && normalized !== 'false' && normalized !== 'no';
 };
 
+const parseNonNegativeIntEnv = (envName, fallback) => {
+    const parsed = parseInt(process.env[envName], 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
 const PRESERVE_SEED_TMP = parseBoolEnv('CLUSTERODM_PRESERVE_SEED_TMP');
 const PRESERVE_ALL_TMP = parseBoolEnv('CLUSTERODM_PRESERVE_UPLOADS');
 
@@ -201,6 +206,45 @@ const waitForStableFile = async (filePath, logFn, options = {}) => {
     const message = `Timed out waiting for stable file ${label}`;
     if (typeof logFn === 'function') logFn(message, 'warn');
     else logger.warn(message);
+    return false;
+};
+
+const waitForImportPathAvailable = async (importPath, logFn, options = {}) => {
+    const maxWaitMs = options.maxWaitMs !== undefined ? options.maxWaitMs : parseNonNegativeIntEnv('CLUSTERODM_IMPORT_PATH_WAIT_MS', 15000);
+    const intervalMs = options.intervalMs !== undefined ? options.intervalMs : parseNonNegativeIntEnv('CLUSTERODM_IMPORT_PATH_INTERVAL_MS', 1000);
+
+    if (!importPath) return false;
+    if (maxWaitMs <= 0) return fs.existsSync(importPath);
+
+    const start = Date.now();
+    let attempts = 0;
+    let lastError = null;
+
+    while (Date.now() - start <= maxWaitMs) {
+        attempts += 1;
+        try {
+            await fs.promises.stat(importPath);
+            if (attempts > 1) {
+                const message = `import_path became available after ${Date.now() - start}ms: ${importPath}`;
+                if (typeof logFn === 'function') logFn(message);
+                else logger.info(`[SPLIT-MERGE] ${message}`);
+            }
+            return true;
+        } catch (err) {
+            lastError = err;
+            if (err.code && err.code !== 'ENOENT' && err.code !== 'ESTALE') {
+                logger.warn(`[SPLIT-MERGE] import_path stat failed with non-transient error for ${importPath}: ${err.message}`);
+                return false;
+            }
+        }
+
+        if (intervalMs <= 0 || Date.now() - start + intervalMs > maxWaitMs) break;
+        await utils.sleep(intervalMs);
+    }
+
+    const message = `import_path not accessible after ${Date.now() - start}ms (${attempts} checks): ${importPath}${lastError ? ` (${lastError.message})` : ''}`;
+    if (typeof logFn === 'function') logFn(message, 'warn');
+    else logger.warn(`[SPLIT-MERGE] ${message}`);
     return false;
 };
 
@@ -1237,7 +1281,9 @@ module.exports = {
         }
         const pathImport = params.import_path || null;
         logger.info(`[SPLIT-MERGE DEBUG][${uuid}] intake uuid=${uuid} pathImport=${pathImport || ""} fileNames=${fileNames.length} imagesCount=${imagesCount} tmpPath=${tmpPath}`);
+        let importPathAvailable = false;
         if (pathImport) {
+            importPathAvailable = await waitForImportPathAvailable(pathImport, logSeed);
             try {
                 const importStats = fs.statSync(pathImport);
                 const importEntries = importStats.isDirectory() ? fs.readdirSync(pathImport).slice(0, 20) : [];
@@ -1280,7 +1326,7 @@ module.exports = {
             imagesCount = fileNames.length;
             logger.info(`[TAPIS DEBUG] Fixed imagesCount from ${params.imagesCount} to ${imagesCount} based on fileNames array`);
         } else if (pathImport) {
-            if (fs.existsSync(pathImport)) {
+            if (importPathAvailable || fs.existsSync(pathImport)) {
                 try {
                     const counted = await countImagesForImportPath(pathImport);
                     if (counted > 0) {
@@ -1352,7 +1398,11 @@ module.exports = {
         const { approved, error } = await cloudProvider.approveNewTask(token, imagesCount);
         if (!approved) throw new Error(error);
 
-        let node = await nodes.findBestAvailableNode(imagesCount, true);
+        let node = await nodes.findBestAvailableNodeWithRetry(imagesCount, true, {
+            taskId: uuid,
+            logFn: isSplitSeedTask ? logSeed : null,
+            retryWhenNoNodes: !!pathImport
+        });
         if (isSplitSeedTask) {
             logSeed(`Best available node selected: ${node ? node.toString() : 'none'}`);
         }
