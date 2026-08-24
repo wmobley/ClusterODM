@@ -55,6 +55,17 @@ cp tapis-config-sample.json tapis-config.json
 - `jobLimit`: Maximum number of concurrent jobs (-1 for unlimited)
 - `createRetries`: Number of retry attempts for job submission
 
+#### Retry Environment Variables
+
+ClusterODM applies bounded retries for transient split-merge scheduling races, such as a shared `import_path` appearing shortly after task submission or a NodeODM worker briefly disappearing/re-registering.
+
+- `CLUSTERODM_IMPORT_PATH_WAIT_MS`: Maximum time to wait for an `import_path` to become visible before falling back to existing behavior. Default: `15000`.
+- `CLUSTERODM_IMPORT_PATH_INTERVAL_MS`: Poll interval while waiting for `import_path`. Default: `1000`.
+- `CLUSTERODM_NODE_SELECTION_MAX_RETRIES`: Number of node-selection retries before falling back to autoscaling or failing. Default: `12`.
+- `CLUSTERODM_NODE_SELECTION_RETRY_DELAY_MS`: Delay between node-selection retries. Default: `5000`.
+
+Set any value to `0` to disable that wait/retry loop.
+
 #### Image Size Mapping
 The `imageSizeMapping` array defines resource allocation based on the number of input images:
 

@@ -19,6 +19,7 @@ const Node = require('./classes/Node');
 const fs = require('fs');
 const path = require('path');
 const logger = require('./logger');
+const utils = require('./utils');
 
 const DATA_DIR = 'data';
 const DATA_FILE = path.join(DATA_DIR, 'nodes.json');
@@ -26,6 +27,11 @@ const TEMP_DATA_FILE = `${DATA_FILE}.tmp`;
 
 let nodes = [];
 let initialized = false;
+
+const parseNonNegativeIntEnv = (envName, fallback) => {
+    const parsed = parseInt(process.env[envName], 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
 
 module.exports = {
     initialize: async function(){
@@ -189,6 +195,37 @@ module.exports = {
         if (!bestNode) bestNode = sorted[0].node;
         bestNode.turn = maxTurnNumber + 1;
         return bestNode;
+    },
+
+    findBestAvailableNodeWithRetry: async function(numImages, update = false, options = {}){
+        const maxRetries = options.maxRetries !== undefined ? options.maxRetries : parseNonNegativeIntEnv('CLUSTERODM_NODE_SELECTION_MAX_RETRIES', 12);
+        const retryDelayMs = options.retryDelayMs !== undefined ? options.retryDelayMs : parseNonNegativeIntEnv('CLUSTERODM_NODE_SELECTION_RETRY_DELAY_MS', 5000);
+        const taskId = options.taskId || 'unknown';
+        const logFn = typeof options.logFn === 'function' ? options.logFn : null;
+        const retryWhenNoNodes = options.retryWhenNoNodes === true;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++){
+            const node = await this.findBestAvailableNode(numImages, update);
+            if (node) {
+                if (attempt > 0) {
+                    const message = `Found available node for ${taskId} after ${attempt} retry attempt(s): ${node}`;
+                    if (logFn) logFn(message);
+                    else logger.info(`[NODES] ${message}`);
+                }
+                return node;
+            }
+
+            if ((!nodes.length && !retryWhenNoNodes) || attempt >= maxRetries) return null;
+
+            const reason = nodes.length ? 'No eligible node available' : 'No nodes registered';
+            const message = `${reason} for ${taskId}; retrying in ${retryDelayMs}ms (attempt ${attempt + 1}/${maxRetries})`;
+            if (logFn) logFn(message, 'warn');
+            else logger.warn(`[NODES] ${message}`);
+            if (retryDelayMs <= 0) continue;
+            await utils.sleep(retryDelayMs);
+        }
+
+        return null;
     },
 
     saveToDisk: async function(){
