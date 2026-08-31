@@ -1366,6 +1366,25 @@ module.exports = {
             }
         }
 
+        // Register task in tasktable early — before the node-finding retry loop,
+        // which can take 60+ seconds (12 attempts × 5s). Without this, a second
+        // submission arriving during the retry loop would bypass the deduplication
+        // check above because findMatchingPendingTask can't find the first task.
+        // This entry will be overwritten with full taskInfo at tasktable.add below.
+        const earlyName = taskName || "Task";
+        await tasktable.add(uuid, {
+            taskInfo: {
+                uuid,
+                name: earlyName,
+                dateCreated: Date.now(),
+                status: { code: statusCodes.RUNNING },
+                options: Array.isArray(options) ? options : [],
+                imagesCount: imagesCount
+            },
+            importPath: pathImport
+        }, token);
+        logger.info(`[TAPIS DEBUG] Early tasktable registration for deduplication: ${uuid}`);
+
         logger.info(`[TAPIS DEBUG] Starting task processing for UUID: ${uuid}`);
         
         // Debug: Check if files still exist at the very start of task processing (skip for path-based tasks)
