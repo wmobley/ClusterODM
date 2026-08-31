@@ -85,6 +85,15 @@ module.exports = {
         return result;
     },
 
+    // Check if user already has jobs in the Tapis queue
+    // Returns false for non-Tapis providers or on error
+    hasUserJobInQueue: async function(token){
+        if (!asrProvider || typeof asrProvider.hasUserJobInQueue !== 'function') {
+            return false;
+        }
+        return await asrProvider.hasUserJobInQueue(token);
+    },
+
     onCommit: async function(taskId, cleanupDelay = 0){
         if (asrProvider){
             const node = await routetable.lookupNode(taskId);

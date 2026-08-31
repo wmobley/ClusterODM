@@ -669,6 +669,21 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         return activeJobs.length;
     }
 
+    // Check if user already has jobs in the Tapis queue (PENDING, QUEUED, etc.)
+    // Used by autoscale to avoid spinning up new resources when jobs are already queued
+    async hasUserJobInQueue(token){
+        try {
+            const jobs = await this.listUserJobs(token);
+            const queuedJobs = jobs.filter(job => this.jobMatchesCluster(job) && this.isActiveTapisJob(job));
+            const hasQueued = queuedJobs.length > 0;
+            logger.info(`[TAPIS DEBUG] User job queue check: ${hasQueued ? 'has jobs in queue' : 'no jobs in queue'} (active=${queuedJobs.length})`);
+            return hasQueued;
+        } catch (e) {
+            logger.warn(`[TAPIS DEBUG] Failed to check user job queue: ${e.message}, defaulting to false`);
+            return false;
+        }
+    }
+
     // Upload files to Tapis storage system
     async uploadFiles(token, fileNames, tmpPath, jobId){
         const client = this.createApiClient(token);

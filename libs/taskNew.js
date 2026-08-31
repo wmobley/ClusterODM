@@ -1428,17 +1428,31 @@ module.exports = {
         
         // Do we need to / can we create a new node via autoscaling?
         const autoscaleImagesCount = imagesCount > 0 ? imagesCount : fileNames.length;
+        
+        // Check if user already has jobs in the Tapis queue before deciding to autoscale
+        let userHasJobInQueue = false;
+        if (token) {
+            try {
+                userHasJobInQueue = await asrProvider.hasUserJobInQueue(token);
+            } catch (e) {
+                logger.warn(`[TAPIS DEBUG] Failed to check user job queue: ${e.message}`);
+            }
+        }
+        
         const autoscale = (!node || node.availableSlots() === 0) && 
                             asrProvider.isAllowedToCreateNewNodes() &&
-                            asrProvider.canHandle(autoscaleImagesCount);
+                            asrProvider.canHandle(autoscaleImagesCount) &&
+                            !userHasJobInQueue;
         
         logger.info(`[TAPIS DEBUG] Autoscale decision: ${autoscale}, node: ${node ? 'exists' : 'null'}`);
-        logger.info(`[TAPIS DEBUG] ASR canCreateNodes: ${asrProvider.isAllowedToCreateNewNodes()}, canHandle: ${asrProvider.canHandle(autoscaleImagesCount)}`);
+        logger.info(`[TAPIS DEBUG] ASR canCreateNodes: ${asrProvider.isAllowedToCreateNewNodes()}, canHandle: ${asrProvider.canHandle(autoscaleImagesCount)}, userHasJobInQueue: ${userHasJobInQueue}`);
         
         // TEMPORARY: Log the autoscale path that would be taken
         if (autoscale) {
             logger.info(`[TAPIS DEBUG] WOULD PROCEED TO AUTOSCALE NODE CREATION`);
             logger.info(`[TAPIS DEBUG] Would call asr.createNode() at line 648+`);
+        } else if (userHasJobInQueue) {
+            logger.info(`[TAPIS DEBUG] Autoscale blocked: user already has jobs in Tapis queue`);
         }
 
         if (autoscale) {
