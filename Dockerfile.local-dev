@@ -6,15 +6,9 @@ EXPOSE 3000
 
 USER root
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        telnet \
-        build-essential \
-        python3 \
-        libcurl4-openssl-dev && \
-    rm -rf /var/lib/apt/lists/*
+# node:20-bullseye already provides curl, Python, build tools, and CA
+# certificates. The local compose stack disables the admin CLI, so telnet and
+# the extra libcurl development package are not required here.
 
 RUN mkdir /var/www
 WORKDIR "/var/www"

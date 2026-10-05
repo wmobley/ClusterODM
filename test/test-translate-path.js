@@ -49,15 +49,15 @@ function setMapping(mapping){
         const out3 = translate(inPath, 'some-random-host');
         assert.strictEqual(out3, path.normalize(DST + '/projects/ABC/images'));
 
-        // Case 4: no mapping found -> null
+        // Case 4: no mapping found -> preserve the normalized original path
         setMapping({});
         const out4 = translate(inPath, 'nodeodm-ls6');
-        assert.strictEqual(out4, null);
+        assert.strictEqual(out4, path.normalize(inPath));
 
-        // Case 5: path that doesn't start with source prefix -> null
+        // Case 5: path that doesn't start with source prefix -> preserve the normalized original path
         setMapping({ '*': { [SRC]: DST } });
         const out5 = translate('/other/prefix/data', 'nodeodm-ls6');
-        assert.strictEqual(out5, null);
+        assert.strictEqual(out5, path.normalize('/other/prefix/data'));
 
         console.log('ALL TESTS PASSED');
         process.exit(0);
