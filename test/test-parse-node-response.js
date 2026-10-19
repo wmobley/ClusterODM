@@ -9,6 +9,9 @@ const assert = require('assert');
         const okBare = parseNodeTaskResponse({ uuid: 'abcd' });
         assert.strictEqual(okBare.uuid, 'abcd');
 
+        assert.strictEqual(parseNodeTaskResponse({ data: { uuid: 'expected' } }, 'expected').uuid, 'expected');
+        assert.throws(() => parseNodeTaskResponse({ data: { uuid: 'other' } }, 'expected'), /UUID mismatch/);
+
         assert.throws(() => parseNodeTaskResponse({ data: { error: 'boom' } }), /boom/);
         assert.throws(() => parseNodeTaskResponse({ data: { hello: 'world' } }), /missing uuid/);
 

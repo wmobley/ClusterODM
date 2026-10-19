@@ -715,7 +715,13 @@ module.exports = {
         resumeFallbackReason: resumeFallbackReason || null
       };
 
-      if (tapisJobUuid) {
+      // Worker registrations carry the job UUID for ownership/diagnostics, but
+      // they are intentionally regular nodes and must not be treated as
+      // duplicate primary Tapis registrations.
+      const isWorkerRegistration = role === 'worker';
+      const isPrimaryTapisRegistration = Boolean(tapisJobUuid && nodeReady && !isWorkerRegistration);
+
+      if (tapisJobUuid && !isWorkerRegistration) {
         const duplicateRegistrations = nodes.all().filter(existingNode =>
           existingNode &&
           existingNode.nodeData &&
@@ -830,7 +836,7 @@ module.exports = {
         }
       }
 
-      if (tapisJobUuid && nodeReady) {
+      if (isPrimaryTapisRegistration) {
         logger.info(`Looking for pre-created TapisNode with job UUID: ${tapisJobUuid}`);
 
         // Find the TapisNode that matches this Tapis job

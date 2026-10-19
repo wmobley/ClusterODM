@@ -81,6 +81,14 @@ const IMAGE_EXTENSIONS = new Set([
     '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.pgm', '.gif'
 ]);
 
+const DEFAULT_PATH_FORWARD_TIMEOUT_MS = 300000;
+const getPathForwardTimeoutMs = () => {
+    const configured = Number(config.path_forward_timeout_ms);
+    return Number.isFinite(configured) && configured >= 1000
+        ? configured
+        : DEFAULT_PATH_FORWARD_TIMEOUT_MS;
+};
+
 const assureUniqueFilename = (dstPath, filename) => {
     return new Promise((resolve, _) => {
         const dstFile = path.join(dstPath, filename);
@@ -529,7 +537,7 @@ const translateImportPathForNode = (importPath, nodeHostname) => {
     return path.normalize(importPath);
 };
 
-const parseNodeTaskResponse = (resp) => {
+const parseNodeTaskResponse = (resp, expectedUuid = null) => {
     if (!resp) throw new Error('node response missing data');
     const data = resp.data !== undefined ? resp.data : resp;
     if (!data) throw new Error('node response missing data');
@@ -540,6 +548,9 @@ const parseNodeTaskResponse = (resp) => {
             snippet = ` (${JSON.stringify(data).slice(0, 200)})`;
         }catch(_){}
         throw new Error(`node response missing uuid${snippet}`);
+    }
+    if (expectedUuid && data.uuid !== expectedUuid) {
+        throw new Error(`node response UUID mismatch: expected ${expectedUuid}, received ${data.uuid}`);
     }
     return data;
 };
@@ -1592,8 +1603,10 @@ module.exports = {
                 const token = nodeObj.getToken ? nodeObj.getToken() : null;
                 const nodeUrl = `${nodeObj.proxyTargetUrl()}/task/new${token ? `?token=${token}` : ''}`;
                 
-                // Timeout reasonably short so we don't block for minutes
-                const timeoutMs = 60 * 1000; // 60s
+                // NodeODM may wait up to two minutes for a shared import path to
+                // become ready. Keep enough room for that readiness check and
+                // filesystem setup, while allowing operators to tune the limit.
+                const timeoutMs = getPathForwardTimeoutMs();
 
                 const resp = await axios.post(nodeUrl, form, {
                     headers: Object.assign({}, form.getHeaders(), {
@@ -1603,7 +1616,7 @@ module.exports = {
                     timeout: timeoutMs
                 });
 
-                return parseNodeTaskResponse(resp);
+                return parseNodeTaskResponse(resp, uuid);
             };
 
             const taskNewInit = async () => {
@@ -1754,6 +1767,60 @@ module.exports = {
                 const MAX_UPLOAD_RETRIES = 5;
                 eventEmitter.emit('close');
 
+                const completePathForward = async () => {
+                    await routetable.add(uuid, node, token);
+                    await tasktable.delete(uuid);
+                    if (!maybePreserveTmp(tmpPath, isSplitSeedTask)) {
+                        try { utils.rmdir(tmpPath); } catch(e){}
+                    }
+
+                    if (global.taskProcessingDirs) {
+                        global.taskProcessingDirs.delete(tmpPath);
+                        logger.info(`[TAPIS DEBUG] Removed directory ${tmpPath} from processing after path-forward, remaining dirs: ${global.taskProcessingDirs.size}`);
+                    }
+                };
+
+                const reconcilePathForward = async () => {
+                    let taskInfo;
+                    try {
+                        taskInfo = await node.taskInfo(uuid);
+                    } catch (reconcileError) {
+                        logger.debug(`[TAPIS DEBUG] Could not reconcile path-based task ${uuid} on ${node}: ${reconcileError.message}`);
+                        return false;
+                    }
+
+                    if (taskInfo && !taskInfo.error && taskInfo.uuid === uuid) {
+                        logger.warn(`[TAPIS DEBUG] Path-based task ${uuid} was accepted by ${node} before the forwarding request timed out; reconciling route`);
+                        await completePathForward();
+                        return true;
+                    }
+                    return false;
+                };
+
+                const retryForward = async (err) => {
+                    if (retries >= MAX_UPLOAD_RETRIES){
+                        throw new Error(`Failed to forward task to processing node after ${retries} attempts. Try again later.`);
+                    }
+
+                    retries++;
+                    logger.warn(`Attempted to forward task ${uuid} to processing node ${node} but failed with: ${err.message}, attempting again (retry: ${retries})`);
+                    await utils.sleep(1000 * 5 * retries);
+
+                    // Keep one logical submission by preserving the UUID across
+                    // retries. Non-autoscaled tasks may switch nodes.
+                    if (!autoscale){
+                        const newNode = await nodes.findBestAvailableNode(imagesCount, true);
+                        if (newNode){
+                            node = newNode;
+                            logger.warn(`Switched ${uuid} to ${node}`);
+                        }else{
+                            logger.warn(`No other nodes available to process ${uuid}, we'll retry the same one.`);
+                        }
+                    }
+
+                    await doUpload();
+                };
+
                 // If this task was submitted with an import_path, attempt to translate and forward it
                 if (pathImport) {
                     try {
@@ -1763,17 +1830,8 @@ module.exports = {
                             if (isSplitSeedTask) logSeed(`Forwarding via import_path ${translated} to ${node}`);
                             await forwardPathToNode(node, translated);
 
-                            // Register routing and cleanup similar to upload flow
-                            await routetable.add(uuid, node, token);
-                            await tasktable.delete(uuid);
-                            if (!maybePreserveTmp(tmpPath, isSplitSeedTask)) {
-                                try { utils.rmdir(tmpPath); } catch(e){}
-                            }
-
-                            if (global.taskProcessingDirs) {
-                                global.taskProcessingDirs.delete(tmpPath);
-                                logger.info(`[TAPIS DEBUG] Removed directory ${tmpPath} from processing after path-forward, remaining dirs: ${global.taskProcessingDirs.size}`);
-                            }
+                            // Register routing and cleanup similar to upload flow.
+                            await completePathForward();
 
                             return;
                         } else {
@@ -1783,7 +1841,16 @@ module.exports = {
                     } catch (e) {
                         logger.error(`[TAPIS DEBUG] Failed forwarding path-based task to node ${node}: ${e.message}`);
                         if (isSplitSeedTask) logSeed(`Import_path forwarding failed: ${e.message}`);
-                        // Allow fallback to upload below (the outer retry logic will handle failures)
+                        // Path-only tasks have no upload fallback. Retry the same
+                        // UUID instead of entering an upload sequence that cannot
+                        // complete and can leave WebODM marked as running.
+                        if (!fileNames || fileNames.length === 0){
+                            if (await reconcilePathForward()) return;
+                            await retryForward(e);
+                            return;
+                        }
+                        // Tasks that also contain files can still use upload as a
+                        // fallback after path forwarding fails.
                     }
                 }
 
@@ -1795,30 +1862,7 @@ module.exports = {
                     if (!autoscale) node.decTransients();
                 }catch(e){
                     if (!autoscale) node.decTransients();
-
-                    // Attempt to retry
-                    if (retries < MAX_UPLOAD_RETRIES){
-                        retries++;
-                        logger.warn(`Attempted to forward task ${uuid} to processing node ${node} but failed with: ${e.message}, attempting again (retry: ${retries})`);
-                        await utils.sleep(1000 * 5 * retries);
-
-                        // If autoscale is enabled, simply retry on same node
-                        // otherwise switch to another node
-                        if (!autoscale){
-                            const newNode = await nodes.findBestAvailableNode(imagesCount, true);
-                            if (newNode){
-                                node = newNode;
-                                logger.warn(`Switched ${uuid} to ${node}`);
-                            }else{
-                                // No nodes available
-                                logger.warn(`No other nodes available to process ${uuid}, we'll retry the same one.`);
-                            }
-                        }
-
-                        await doUpload();
-                    }else{
-                        throw new Error(`Failed to forward task to processing node after ${retries} attempts. Try again later.`);
-                    }
+                    await retryForward(e);
                 }
             };
 
@@ -1949,5 +1993,6 @@ module.exports = {
 
     // Export helper for testing
     translateImportPathForNode: translateImportPathForNode,
-    parseNodeTaskResponse: parseNodeTaskResponse
+    parseNodeTaskResponse: parseNodeTaskResponse,
+    getPathForwardTimeoutMs: getPathForwardTimeoutMs
 };

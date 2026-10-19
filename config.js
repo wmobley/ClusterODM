@@ -46,7 +46,7 @@ let argDefs = {
     default: defaultConfig,
 
     int: ['port', 'admin-cli-port', 'admin-web-port', 
-          'secure-port', 'upload-max-speed', 'flood-limit', 'stale-uploads-timeout', 'webodm-timeout-ms'] // for cast only, not used by minimist
+          'secure-port', 'upload-max-speed', 'flood-limit', 'stale-uploads-timeout', 'path-forward-timeout-ms', 'webodm-timeout-ms'] // for cast only, not used by minimist
 };
 let argv = require('minimist')(process.argv.slice(2), argDefs);
 
@@ -79,6 +79,7 @@ Options:
     --webodm-base-url <url> Base URL for WebODM when leveraging its authentication (default: ${defaultConfig.webodm?.baseUrl || 'http://localhost:8000'})
     --webodm-require-staff Require the WebODM user to have staff permissions to gain access (default: ${defaultConfig.webodm?.requireStaff !== false})
     --webodm-timeout-ms <number> Timeout in milliseconds for WebODM authentication requests (default: ${defaultConfig.webodm?.timeoutMs || 10000})
+    --path-forward-timeout-ms <number> Timeout in milliseconds for shared-filesystem task handoff requests (default: ${defaultConfig['path-forward-timeout-ms'] || 300000})
 
 Log Levels: 
 error | debug | info | verbose | debug | silly 
