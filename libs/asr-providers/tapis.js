@@ -482,7 +482,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
         }
 
         // Try a simple API call to validate the token
-        const client = this.createApiClient(token);
+        const client = this.createApiClient(token, 15000);
         try {
             await client.get('/v3/systems');
             return true;
@@ -544,7 +544,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
     }
 
     // Create API client with authentication
-    createApiClient(token){
+    createApiClient(token, timeoutOverride){
         if (!token) {
             throw new Error('Tapis token is required');
         }
@@ -554,7 +554,7 @@ module.exports = class TapisAsrProvider extends AbstractASRProvider{
             headers: {
                 'X-Tapis-Token': token
             },
-            timeout: 300000, // 5 minutes for large file transfers
+            timeout: timeoutOverride || 300000, // 5 minutes for large file transfers
             maxRedirects: 5
         });
     }

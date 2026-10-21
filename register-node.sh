@@ -86,8 +86,10 @@ Environment Variables:
     RETRY_DELAY                   Delay between retries in seconds
 
 Examples:
-    # Basic registration with auto-detected IP
-    $0 --cluster-host clusterodm.example.com
+    # Registration with a shared secret and auto-detected IP
+    $0 \
+        --cluster-host clusterodm.example.com \
+        --registration-secret mySecretKey
 
     # Registration with Tapis JWT token (recommended for Tapis deployments)
     $0 \\
@@ -427,6 +429,12 @@ main() {
         exit 1
     fi
 
+    if [[ -z "$TAPIS_TOKEN" && -z "$REGISTRATION_SECRET" ]]; then
+        print_error "A Tapis JWT or registration secret is required"
+        print_info "Use --tapis-token, --registration-secret, or the corresponding environment variable"
+        exit 1
+    fi
+
     # Auto-detect node host if not provided
     detect_node_host
 
@@ -437,7 +445,7 @@ main() {
         echo "Node ID: $NODE_ID"
     fi
     echo "Token: $([ -n "$NODE_TOKEN" ] && echo "***set***" || echo "none")"
-    echo "Auth: $([ -n "$TAPIS_TOKEN" ] && echo "Tapis JWT" || [ -n "$REGISTRATION_SECRET" ] && echo "Secret" || echo "none")"
+    echo "Auth: $([ -n "$TAPIS_TOKEN" ] && echo "Tapis JWT" || echo "Secret")"
     echo ""
 
     if [[ "$DEREGISTER" == "true" ]]; then

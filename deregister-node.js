@@ -48,8 +48,10 @@ Environment Variables:
     All options can be set via environment variables as shown in parentheses.
 
 Examples:
-    # Basic de-registration (finds node by hostname:port)
-    node deregister-node.js --cluster-host clusterodm.example.com
+    # De-registration with a shared secret (finds node by hostname:port)
+    node deregister-node.js \
+        --cluster-host clusterodm.example.com \
+        --registration-secret mySecretKey
 
     # De-registration with Tapis JWT token
     node deregister-node.js \\
@@ -89,6 +91,12 @@ HPC Integration:
         process.exit(1);
     }
 
+    if (!args.tapisToken && !args.registrationSecret) {
+        console.error('❌ Error: a Tapis JWT or registration secret is required');
+        console.error('Use --tapis-token, --registration-secret, or the corresponding environment variable');
+        process.exit(1);
+    }
+
     console.log('🔄 ClusterODM Node De-Registration Client');
     console.log('=========================================');
     console.log(`Cluster: ${args.clusterHost}:${args.clusterPort}`);
@@ -96,7 +104,7 @@ HPC Integration:
     if (args.nodeId) {
         console.log(`Node ID: ${args.nodeId}`);
     }
-    console.log(`Auth: ${args.tapisToken ? 'Tapis JWT' : args.registrationSecret ? 'Secret' : 'none'}`);
+    console.log(`Auth: ${args.tapisToken ? 'Tapis JWT' : 'Secret'}`);
     console.log('');
 
     // Attempt de-registration

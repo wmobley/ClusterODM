@@ -13,7 +13,7 @@ node index.js --asr tapis-config.json
 
 This will start ClusterODM-Tapis on:
 - **Main proxy**: http://localhost:3000
-- **Admin CLI**: telnet localhost:8080
+- **Admin CLI**: telnet localhost:8080 when started with `--admin-pass`; loopback-only
 - **Admin web interface**: http://localhost:10000
 
 ### Custom Ports (if needed)
@@ -22,9 +22,15 @@ This will start ClusterODM-Tapis on:
 node index.js --asr tapis-config.json --port 3001 --admin-cli-port 8081 --admin-web-port 10001
 ```
 
+The admin CLI is disabled when `--admin-pass` is omitted. If enabled, it binds to loopback and
+should be reached remotely through an SSH tunnel. If its port is already in use, ClusterODM
+reports the bind error while continuing the web and proxy services; choose a free port or set
+`--admin-cli-port 0` to disable it explicitly.
+
 ## JWT Token Authentication
 
-ClusterODM-Tapis now requires JWT tokens to be provided with each request, not in the config file.
+ClusterODM-Tapis uses JWT tokens per request, not in the config file. A startup token is optional
+and only enables a preflight check.
 
 ### Option 1: Authorization Header (Recommended)
 
@@ -59,7 +65,7 @@ cd /Users/wmobley/Documents/GitHub/odm-suite/ClusterODM-Tapis
 
 # Submit a small processing job with your JWT token (faster for testing)
 curl -X POST "http://localhost:3000/task/new" \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6Imd5YU5uVXJJZGxsYkhkWU5vWEpoRE85NTZDa0pkbWdybURPSDJNZHNnclkiLCJ0eXAiOiJKV1QifQ.eyJqdGkiOiJlMTZmNDI2NC1hZjA5LTQ2NDUtODU2Zi1jNjQzZTgyYzhkMGYiLCJpc3MiOiJodHRwczovL3BvcnRhbHMudGFwaXMuaW8vdjMvdG9rZW5zIiwic3ViIjoid21vYmxleUBwb3J0YWxzIiwidGFwaXMvdGVuYW50X2lkIjoicG9ydGFscyIsInRhcGlzL3Rva2VuX3R5cGUiOiJhY2Nlc3MiLCJ0YXBpcy9kZWxlZ2F0aW9uIjpmYWxzZSwidGFwaXMvZGVsZWdhdGlvbl9zdWIiOm51bGwsInRhcGlzL3VzZXJuYW1lIjoid21vYmxleSIsInRhcGlzL2FjY291bnRfdHlwZSI6InVzZXIiLCJleHAiOjE3NTc1MzQzMzEsInRhcGlzL2NsaWVudF9pZCI6bnVsbCwidGFwaXMvZ3JhbnRfdHlwZSI6InBhc3N3b3JkIn0.h802fj6vU-ZBXDAUmfkabrkX3gPxo3pm3QkB_FdG51_A2KZxCPXuMrDiadO-8j4bmj3lZB2eXjPvclXtyHG02fm2Bi5-lpH4cS0KO-Soq5d1rdRpfYSJTJNmnxbR60ehujhgMtufEtSmCU6ch-apqczrwg4QlWbZ2TIoAZk6Nh0fI95hMQp3N4lokBQAJ0diSY5CFLXMCuXGOz58qsV6Co-8ENNrB1TfpnnAvGQxa9nZTh6LD5AMCx86DM_gD4fwiEGzI0yJ5Oh94XfrAVI3fgRblHVOQBPwkAHhidN3njNBF8_OZvLJYrCn3CcJ6BeIncsmeCPZlwan5a2ena59mw" \
+  -H "Authorization: Bearer ${TAPIS_TOKEN:?Set TAPIS_TOKEN}" \
   -F "images=@testData/small/DJI_20250801034350_0002_D.JPG" \
   -F "images=@testData/small/DJI_20250801034351_0003_D.JPG" \
   -F "name=Small Tapis Test Job" \
@@ -71,7 +77,7 @@ curl -X POST "http://localhost:3000/task/new" \
 ```bash
 # Submit a larger processing job with your JWT token
 curl -X POST "http://localhost:3000/task/new" \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6Imd5YU5uVXJJZGxsYkhkWU5vWEpoRE85NTZDa0pkbWdybURPSDJNZHNnclkiLCJ0eXAiOiJKV1QifQ.eyJqdGkiOiJlMTZmNDI2NC1hZjA5LTQ2NDUtODU2Zi1jNjQzZTgyYzhkMGYiLCJpc3MiOiJodHRwczovL3BvcnRhbHMudGFwaXMuaW8vdjMvdG9rZW5zIiwic3ViIjoid21vYmxleUBwb3J0YWxzIiwidGFwaXMvdGVuYW50X2lkIjoicG9ydGFscyIsInRhcGlzL3Rva2VuX3R5cGUiOiJhY2Nlc3MiLCJ0YXBpcy9kZWxlZ2F0aW9uIjpmYWxzZSwidGFwaXMvZGVsZWdhdGlvbl9zdWIiOm51bGwsInRhcGlzL3VzZXJuYW1lIjoid21vYmxleSIsInRhcGlzL2FjY291bnRfdHlwZSI6InVzZXIiLCJleHAiOjE3NTc1MzQzMzEsInRhcGlzL2NsaWVudF9pZCI6bnVsbCwidGFwaXMvZ3JhbnRfdHlwZSI6InBhc3N3b3JkIn0.h802fj6vU-ZBXDAUmfkabrkX3gPxo3pm3QkB_FdG51_A2KZxCPXuMrDiadO-8j4bmj3lZB2eXjPvclXtyHG02fm2Bi5-lpH4cS0KO-Soq5d1rdRpfYSJTJNmnxbR60ehujhgMtufEtSmCU6ch-apqczrwg4QlWbZ2TIoAZk6Nh0fI95hMQp3N4lokBQAJ0diSY5CFLXMCuXGOz58qsV6Co-8ENNrB1TfpnnAvGQxa9nZTh6LD5AMCx86DM_gD4fwiEGzI0yJ5Oh94XfrAVI3fgRblHVOQBPwkAHhidN3njNBF8_OZvLJYrCn3CcJ6BeIncsmeCPZlwan5a2ena59mw" \
+  -H "Authorization: Bearer ${TAPIS_TOKEN:?Set TAPIS_TOKEN}" \
   -F "images=@testData/DJI_20250801034349_0001_D.JPG" \
   -F "images=@testData/DJI_20250801034350_0002_D.JPG" \
   -F "images=@testData/DJI_20250801034351_0003_D.JPG" \
@@ -107,4 +113,4 @@ If the token is invalid, you'll get a validation error from the Tapis API.
 
 - **Admin web interface**: http://localhost:10000 - View node status and job management
 - **Logs**: Check console output for detailed processing information
-- **Admin CLI**: `telnet localhost 8080` - Command-line administration
+- **Admin CLI**: `telnet localhost 8080` after starting with `--admin-pass`; use an SSH tunnel for remote access

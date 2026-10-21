@@ -35,19 +35,43 @@ const routetable = require('./libs/routetable');
     if (config.debug) logger.warn("Running in debug mode");
     logger.info(package_info.name + " " + package_info.version + " started with PID " + process.pid);
     logger.debug("Debug messages are ON");
-    if (config.admin_cli_port !== 0) admincli.create({port: config.admin_cli_port, password: config.admin_pass});
-    if (config.admin_web_port !== 0) adminweb.create({
-        port: config.admin_web_port,
-        password: config.admin_pass,
-        webodm: config.webodm,
-        sessionSecret: config.admin_session_secret,
-        useSecureCookies: !!config.use_ssl,
-        tapisJwt: {
-            enabled: config.admin_web_use_tapis_jwt,
-            allowedTenants: config.admin_web_allowed_tenants || [],
-            allowedUsers: config.admin_web_allowed_users || []
+    if (config.admin_cli_port !== 0){
+        if (!config.admin_pass){
+            logger.warn(`Admin CLI disabled because no password was configured (port ${config.admin_cli_port})`);
+        }else{
+            try {
+                await admincli.create({port: config.admin_cli_port, password: config.admin_pass});
+            } catch (error){
+                if (error && error.code === 'EADDRINUSE'){
+                    logger.error(`Unable to start admin CLI on port ${config.admin_cli_port}: address already in use. Stop the other service or choose a different --admin-cli-port.`);
+                }else{
+                    logger.error(`Unable to start admin CLI: ${error && error.stack ? error.stack : error}`);
+                }
+                process.exitCode = 1;
+            }
         }
-    });
+    }
+    if (config.admin_web_port !== 0){
+        try {
+            await adminweb.create({
+                port: config.admin_web_port,
+                password: config.admin_pass,
+                registrationSecret: config.registration_secret,
+                webodm: config.webodm,
+                sessionSecret: config.admin_session_secret,
+                useSecureCookies: !!config.use_ssl,
+                tapisJwt: {
+                    enabled: config.admin_web_use_tapis_jwt,
+                    allowedTenants: config.admin_web_allowed_tenants || [],
+                    allowedUsers: config.admin_web_allowed_users || []
+                }
+            });
+        } catch (error){
+            logger.error(`Unable to start admin web interface on port ${config.admin_web_port}: ${error && error.code === 'EADDRINUSE' ? 'address already in use' : (error && error.message ? error.message : error)}`);
+            process.exitCode = 1;
+            return;
+        }
+    }
     const cloudProvider = (require('./libs/cloudProvider')).initialize(config.cloud_provider);
     await (require('./libs/asrProvider')).initialize(config.asr);
     await nodes.initialize();

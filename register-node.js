@@ -133,8 +133,10 @@ Environment Variables:
     TAPIS_TOKEN: Preferred for Tapis-based deployments (alternative to --tapis-token)
 
 Examples:
-    # Basic registration with auto-detected IP
-    node register-node.js --cluster-host clusterodm.example.com
+    # Registration with a shared secret and auto-detected IP
+    node register-node.js \
+        --cluster-host clusterodm.example.com \
+        --registration-secret mySecretKey
 
     # Registration with Tapis JWT token (recommended for Tapis deployments)
     node register-node.js \\
@@ -353,6 +355,12 @@ async function main() {
         process.exit(1);
     }
 
+    if (!args.tapisToken && !args.registrationSecret) {
+        console.error('❌ Error: a Tapis JWT or registration secret is required');
+        console.error('Use --tapis-token, --registration-secret, or the corresponding environment variable');
+        process.exit(1);
+    }
+
     const isDeregistration = args.deregister;
     const title = isDeregistration ? 'ClusterODM Node De-Registration Client' : 'ClusterODM Node Auto-Registration Client';
 
@@ -364,7 +372,7 @@ async function main() {
         console.log(`Node ID: ${args.nodeId}`);
     }
     console.log(`Token: ${args.nodeToken ? '***set***' : 'none'}`);
-    console.log(`Auth: ${args.tapisToken ? 'Tapis JWT' : args.registrationSecret ? 'Secret' : 'none'}`);
+    console.log(`Auth: ${args.tapisToken ? 'Tapis JWT' : 'Secret'}`);
     console.log('');
 
     if (isDeregistration) {

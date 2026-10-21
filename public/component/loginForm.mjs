@@ -68,7 +68,7 @@ export const LoginForm = ({ onSubmit, error, mode, authConfig }) => {
           spellcheck="false"
         ></textarea>
         <div class="form-text">
-          The token is stored only for the duration of this session.
+          The server validates the token and stores only your identity in a secure session cookie.
         </div>
       </div>
     `;

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node test/test-config-node-shared-path.js && node test/test-parse-node-response.js && node test/test-translate-path.js && node test/test-translate-path-edges.js && node test/test-tapis-active-jobs.js && node test/test-tapis-task-options.js && node test/test-tapis-checkpoint-resume.js",
+    "test": "node test/test-secret-hygiene.js && node test/test-admincli-port.js && node test/test-adminweb-auth.js && node test/test-config-node-shared-path.js && node test/test-path-forward-timeout.js && node test/test-parse-node-response.js && node test/test-translate-path.js && node test/test-translate-path-edges.js && node test/test-tapis-active-jobs.js && node test/test-tapis-task-options.js && node test/test-tapis-checkpoint-resume.js",
     "winbundle": "node winbundle.js"
   },
   "repository": {

@@ -13,7 +13,6 @@ The webhook registration system allows compute nodes to automatically register t
 The system supports multiple authentication methods:
 - **Tapis JWT tokens** (recommended for Tapis deployments) - leverages existing Tapis authentication
 - **Registration secrets** (traditional approach) - shared secret authentication
-- **No authentication** (testing/trusted networks only)
 
 The system includes both **registration** and **de-registration** capabilities:
 - **Registration** - nodes join the cluster when they start up
@@ -33,7 +32,7 @@ The cluster exposes REST endpoints that accept node management requests. These e
 - Supports multiple authentication methods:
   - **Tapis JWT validation** - verifies tokens against Tapis API
   - **Registration secret** - traditional shared secret
-  - **No authentication** - for testing environments
+  - **No credential** - rejected with HTTP 401
 - Adds the node to the cluster using the existing `nodes.addUnique()` logic
 - Returns success/failure status with authentication method used
 
@@ -56,9 +55,6 @@ Multiple client implementations are provided:
 Start ClusterODM with optional authentication:
 
 ```bash
-# Without authentication (testing only)
-node index.js --admin-web-port 10000
-
 # With Tapis ASR provider (automatically enables JWT validation)
 node index.js --admin-web-port 10000 --asr tapis-config.json
 
@@ -71,21 +67,21 @@ node index.js --admin-web-port 10000 --asr tapis-config.json --registration-secr
 
 Configuration options:
 - `--asr <file>`: Enable Tapis ASR provider (automatically enables JWT token validation)
-- `--registration-secret <string>`: Shared secret for fallback authentication (optional)
+- `--registration-secret <string>`: Shared secret authentication for workers (optional when every worker uses a Tapis JWT)
 - `--admin-web-port <port>`: Port for the admin web interface (default: 10000)
 
 **Authentication Priority**:
-1. **Tapis JWT token** - validated against Tapis API if ASR provider is configured
-2. **Registration secret** - fallback if JWT not provided or invalid
-3. **No authentication** - only if no secret is configured
+1. **Tapis JWT token** - validated against Tapis API when supplied
+2. **Registration secret** - accepted only when no Tapis token is supplied
+3. **No credential** - rejected
 
 ### Node Configuration
 
 #### Using the Node.js Client
 
 ```bash
-# Basic registration
-node register-node.js --cluster-host clusterodm.example.com
+# Registration requires a Tapis JWT or registration secret
+node register-node.js --cluster-host clusterodm.example.com --registration-secret "your-secret-key"
 
 # With Tapis JWT token (recommended for Tapis deployments)
 node register-node.js \
@@ -300,15 +296,17 @@ deregister_and_exit() {
     "hostname": "192.168.1.100",
     "port": 3000,
     "token": "optional-nodeodm-token",
-    "tapisToken": "eyJ0eXAiOiJKV1QiOiJhbGciOiJSUzI1NiJ9...",
-    "registrationSecret": "optional-shared-secret"
+    "tapisToken": "eyJ0eXAiOiJKV1QiOiJhbGciOiJSUzI1NiJ9..."
 }
 ```
+
+Alternatively, send `registrationSecret` instead of `tapisToken`. If both are supplied, the
+Tapis token is used and must validate; the secret is not a fallback for an invalid token.
 
 **Authentication Fields** (provide one):
 - `tapisToken`: Tapis JWT token (preferred for Tapis deployments)
 - `registrationSecret`: Shared secret (traditional approach)
-- Neither: No authentication (if cluster doesn't require it)
+- Neither: Rejected with HTTP 401
 
 **Response** (Success):
 ```json
@@ -324,14 +322,15 @@ deregister_and_exit() {
 ```json
 {
     "success": false,
-    "error": "Tapis token validation failed: token is expired"
+    "error": "Authentication required"
 }
 ```
 
 **HTTP Status Codes**:
 - `200`: Success or node already exists
-- `400`: Missing required fields (hostname, port) or Tapis provider not configured
+- `400`: Missing required fields (hostname, port)
 - `401`: Invalid authentication (Tapis token or registration secret)
+- `503`: Tapis authentication service unavailable
 
 ### De-registration Endpoint
 
@@ -343,8 +342,7 @@ deregister_and_exit() {
     "hostname": "192.168.1.100",
     "port": 3000,
     "nodeId": 3,
-    "tapisToken": "eyJ0eXAiOiJKV1QiOiJhbGciOiJSUzI1NiJ9...",
-    "registrationSecret": "optional-shared-secret"
+    "tapisToken": "eyJ0eXAiOiJKV1QiOiJhbGciOiJSUzI1NiJ9..."
 }
 ```
 
@@ -355,7 +353,8 @@ deregister_and_exit() {
 **Authentication Fields** (provide one):
 - `tapisToken`: Tapis JWT token (preferred for Tapis deployments)
 - `registrationSecret`: Shared secret (traditional approach)
-- Neither: No authentication (if cluster doesn't require it)
+- Neither: Rejected with HTTP 401. A Tapis token may only remove a node owned by that identity;
+  a registration secret may remove any node.
 
 **Response** (Success):
 ```json
@@ -423,17 +422,9 @@ For non-Tapis environments or fallback authentication:
 - Consider firewall rules to restrict access to trusted networks
 - Use HTTPS in production (configure SSL certificates)
 
-### Alternative: No Authentication
+### No unauthenticated mode
 
-For testing or trusted networks, you can run without a registration secret:
-
-```bash
-# Cluster side - no secret required
-node index.js --admin-web-port 10000
-
-# Node side - no secret needed
-./register-node.sh --cluster-host clusterodm.example.com
-```
+The webhook never accepts UUID-shaped registration IDs, owner metadata, or an omitted credential as authentication. Stage a validated Tapis JWT or the configured registration secret in every worker before rollout.
 
 ## Troubleshooting
 
@@ -486,8 +477,10 @@ tail -f ClusterODM.log | grep -i "registration\|webhook"
 ### Before (Manual Registration)
 
 ```bash
-# Manual process
-telnet clusterodm.example.com 8080
+# Manual process (requires `--admin-pass`; the CLI is loopback-only)
+# On the ClusterODM host, or through an SSH tunnel:
+telnet localhost 8080
+> LOGIN your-admin-password
 > NODE ADD 192.168.1.100 3000
 > exit
 ```
@@ -495,7 +488,7 @@ telnet clusterodm.example.com 8080
 ### After (Automatic Registration)
 
 ```bash
-# Automatic process
+# Automatic process (a credential is required)
 export CLUSTER_HOST=clusterodm.example.com
 export REGISTRATION_SECRET="your-secret"
 ./register-node.sh
@@ -503,10 +496,9 @@ export REGISTRATION_SECRET="your-secret"
 
 ### Compatibility
 
-The webhook registration system is fully compatible with existing telnet-based registration:
-- Existing nodes continue to work unchanged
-- Manual registration still available via telnet
-- Mixed environments (manual + automatic) are supported
+The webhook registration system remains compatible with manual admin-CLI registration, but the
+CLI now requires `--admin-pass` and is loopback-only. Use an SSH tunnel for remote CLI access.
+Mixed manual and automatic environments are supported.
 
 ## Advanced Usage
 
@@ -527,10 +519,10 @@ The registration scripts can optionally verify NodeODM is running before registr
 
 ```bash
 # Node.js client automatically checks NodeODM
-node register-node.js --cluster-host clusterodm.example.com
+node register-node.js --cluster-host clusterodm.example.com --registration-secret "your-secret"
 
 # Shell script also validates
-./register-node.sh --cluster-host clusterodm.example.com
+./register-node.sh --cluster-host clusterodm.example.com --registration-secret "your-secret"
 ```
 
 ### Environment Variable Configuration
@@ -559,12 +551,10 @@ The webhook endpoint is implemented in `adminweb.js`:
 
 ```javascript
 app.post("/webhook/register-node", (req, res) => {
-    const { hostname, port, token, registrationSecret } = req.body;
+    const { hostname, port, token, tapisToken, registrationSecret } = req.body;
 
-    // Validation and authentication logic
-    if (options.registrationSecret && registrationSecret !== options.registrationSecret) {
-        return res.status(401).json({ error: "Invalid registration secret" });
-    }
+    // Authenticate with a provider-validated Tapis token or the configured shared secret.
+    // UUIDs and owner metadata are not authentication factors.
 
     // Use existing node management logic
     const node = nodes.addUnique(hostname, port, token);

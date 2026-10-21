@@ -23,7 +23,6 @@ const axios = require("axios");
 const crypto = require("crypto");
 const nodes = require("./libs/nodes");
 const package_info = require("./package_info");
-const cors = require("cors");
 const netutils = require("./libs/netutils");
 const asrProvider = require("./libs/asrProvider");
 const routetable = require("./libs/routetable");
@@ -43,6 +42,56 @@ const decodeJwtPayload = (token) => {
     logger.warn(`Failed to decode JWT payload: ${err.message}`);
     return null;
   }
+};
+
+const SENSITIVE_KEY = /(token|secret|password|authorization|access_token|refresh_token)/i;
+
+const redactSensitive = (value) => {
+  if (Array.isArray(value)) return value.map(redactSensitive);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      SENSITIVE_KEY.test(key) ? "[REDACTED]" : redactSensitive(entry),
+    ])
+  );
+};
+
+const safeStringEqual = (left, right) => {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const normalizedIdentityValues = (identity) => {
+  if (!identity) return [];
+  const username = identity.username ? String(identity.username).toLowerCase() : null;
+  const tenantId = identity.tenantId ? String(identity.tenantId).toLowerCase() : null;
+  return [
+    username,
+    username && tenantId ? `${username}@${tenantId}` : null,
+    identity.fullUser ? String(identity.fullUser).toLowerCase() : null,
+  ].filter(Boolean);
+};
+
+const ownerMatchesIdentity = (owner, identity) => {
+  if (!owner || !identity) return false;
+  return normalizedIdentityValues(identity).includes(String(owner).toLowerCase());
+};
+
+const identityFromPayload = (payload) => {
+  if (!payload) return null;
+  const username = payload["tapis/username"] || payload.username || payload.sub;
+  if (!username) return null;
+  const tenantId = payload["tapis/tenant_id"] || payload.tenant_id || null;
+  return {
+    username,
+    userId: payload["tapis/user_id"] || payload.user_id || payload.sub || null,
+    email: payload.email || payload["tapis/email"] || null,
+    tenantId,
+    fullUser: tenantId ? `${username}@${tenantId}` : username,
+  };
 };
 
 const buildUserInfo = (auth) => ({
@@ -86,7 +135,7 @@ module.exports = {
     } else if (options.password) {
       logger.warn("WebODM authentication not configured; falling back to static admin password");
     } else {
-      logger.warn(`No WebODM authentication or admin password specified, admin interface is unsecured`);
+      logger.warn(`No WebODM authentication or admin password specified, protected admin APIs are disabled`);
     }
 
     const allowedTenants = Array.isArray(tapisJwtConfig.allowedTenants)
@@ -105,20 +154,8 @@ module.exports = {
       : "none";
 
     const authConfigResponse = { mode: authMode };
-    if (useTapisJwt) {
-      authConfigResponse.tapisJwt = {
-        allowedTenants,
-        allowedUsers,
-      };
-    } else if (useWebodmAuth) {
-      authConfigResponse.webodm = {
-        baseUrl: webodmBaseUrl,
-        requireStaff: webodmRequireStaff,
-      };
-    }
 
     const app = express();
-    app.use(cors());
 
     const sessionAuthEnabled = useTapisJwt || useWebodmAuth;
 
@@ -137,6 +174,7 @@ module.exports = {
             httpOnly: true,
             sameSite: "lax",
             secure: !!options.useSecureCookies,
+            maxAge: 8 * 60 * 60 * 1000,
           },
         })
       );
@@ -153,8 +191,44 @@ module.exports = {
     app.use(express.json());
     app.use(express.static("public"));
 
-    const ensureAuthFallback = (_req, _res, next) => next();
+    const rejectForeignOrigin = (req, res, next) => {
+      const origin = req.get("origin");
+      const stateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
+      if (!stateChanging || !origin) return next();
+      try {
+        const originUrl = new URL(origin);
+        if (originUrl.host !== req.get("host")) {
+          return res.status(403).json({ error: "Cross-origin request rejected" });
+        }
+      } catch (_error) {
+        return res.status(403).json({ error: "Cross-origin request rejected" });
+      }
+      return next();
+    };
+    app.use(rejectForeignOrigin);
+
+    const ensureAuthFallback = (_req, res, _next) => {
+      if (authMode === "none") {
+        return res.status(503).json({ error: "Admin authentication is not configured" });
+      }
+      return _next();
+    };
     let ensureAuth = ensureAuthFallback;
+
+    const validateTapisToken = async (token) => {
+      if (typeof options.validateTapisToken === "function") {
+        return options.validateTapisToken(token);
+      }
+      const provider = asrProvider.get();
+      if (!provider || typeof provider.validateToken !== "function" ||
+          (provider.getDriverName && provider.getDriverName() !== "tapis")) {
+        const error = new Error("Tapis provider unavailable");
+        error.code = "TAPIS_PROVIDER_UNAVAILABLE";
+        throw error;
+      }
+      return provider.validateToken(token);
+    };
+
 
     const loginUrl = useWebodmAuth ? new URL("/api/token-auth/", webodmBaseUrl).toString() : null;
     const adminUsersUrl = useWebodmAuth ? new URL("/api/admin/users/", webodmBaseUrl).toString() : null;
@@ -229,22 +303,35 @@ module.exports = {
           return res.status(400).json({ error: "Missing token" });
         }
 
-        const payload = decodeJwtPayload(token);
-        if (!payload) {
+        let payload;
+        try {
+          await validateTapisToken(token);
+          payload = decodeJwtPayload(token);
+        } catch (error) {
+          if (error && error.code === "TAPIS_PROVIDER_UNAVAILABLE") {
+            logger.error("Tapis provider unavailable while validating admin login token");
+            return res.status(503).json({ error: "Authentication service unavailable" });
+          }
+          logger.warn("Rejected invalid Tapis admin login token");
           return res.status(401).json({ error: "Invalid token" });
         }
 
-        const expiresAtMs = payload.exp ? payload.exp * 1000 : null;
-        if (expiresAtMs && expiresAtMs <= Date.now()) {
+        if (!payload) return res.status(401).json({ error: "Invalid token" });
+
+        const expiresAtMs = Number.isFinite(Number(payload.exp)) ? Number(payload.exp) * 1000 : null;
+        if (!expiresAtMs) {
+          return res.status(401).json({ error: "Token missing expiration" });
+        }
+        if (expiresAtMs <= Date.now()) {
           return res.status(401).json({ error: "Token expired" });
         }
 
-        const username = payload["tapis/username"] || payload.username || payload.sub;
-        if (!username) {
+        const identity = identityFromPayload(payload);
+        if (!identity) {
           return res.status(401).json({ error: "Token missing username claim" });
         }
 
-        const tenantId = payload["tapis/tenant_id"] || payload.tenant_id || null;
+        const { username, tenantId } = identity;
         if (allowedTenants.length > 0 && (!tenantId || !allowedTenants.includes(tenantId))) {
           logger.warn(`Rejected Tapis token for tenant ${tenantId || "unknown"} (not in allowed list)`);
           return res.status(403).json({ error: "Tenant not allowed" });
@@ -256,10 +343,9 @@ module.exports = {
         }
 
         const authPayload = {
-          token,
           username,
-          userId: payload["tapis/user_id"] || payload.user_id || payload.sub || null,
-          email: payload.email || payload["tapis/email"] || null,
+          userId: identity.userId,
+          email: identity.email,
           tenantId,
           exp: payload.exp,
           iat: payload.iat,
@@ -272,6 +358,7 @@ module.exports = {
           }
 
           req.session.webodmAuth = authPayload;
+          req.session.cookie.maxAge = Math.max(1, Math.min(8 * 60 * 60 * 1000, expiresAtMs - Date.now()));
           res.json({
             success: true,
             user: buildUserInfo(authPayload),
@@ -317,7 +404,6 @@ module.exports = {
 
           const payload = decodeJwtPayload(token) || {};
           const authPayload = {
-            token,
             username: payload.username || username,
             userId: payload.user_id,
             email: payload.email,
@@ -332,6 +418,9 @@ module.exports = {
             }
 
             req.session.webodmAuth = authPayload;
+            if (authPayload.exp && authPayload.exp * 1000 > Date.now()) {
+              req.session.cookie.maxAge = Math.max(1, Math.min(8 * 60 * 60 * 1000, authPayload.exp * 1000 - Date.now()));
+            }
             res.json({
               success: true,
               user: buildUserInfo(authPayload),
@@ -345,7 +434,7 @@ module.exports = {
             if (status === 400 || status === 401) {
               return res.status(401).json({ error: "Invalid credentials" });
             }
-            logger.error(`WebODM authentication error (${status}): ${err.response.data}`);
+            logger.error(`WebODM authentication error (${status})`);
             return res.status(502).json({ error: "Failed to authenticate with WebODM" });
           }
           logger.error(`WebODM authentication request failed: ${err.message}`);
@@ -696,7 +785,7 @@ module.exports = {
       }
 
       logger.info(`Node registration request from ${hostname}:${port}`);
-      logger.info(`[TAPIS DEBUG] Registration payload: ${JSON.stringify(req.body)}`);
+      logger.info(`[TAPIS DEBUG] Registration payload: ${JSON.stringify(redactSensitive(req.body))}`);
 
       const registrationMeta = {
         tapisJobUuid: tapisJobUuid || null,
@@ -742,99 +831,54 @@ module.exports = {
         }
       }
 
-      // Authentication validation
-      let authenticated = false;
+      let authMethod = null;
+      let validatedIdentity = null;
 
-      // Method 1: UUID-based authentication (simple and reliable for Tapis jobs)
-      if (registrationUuid) {
-        // Simple UUID validation - check if it's a valid UUID format
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidRegex.test(registrationUuid)) {
-          logger.info(`UUID authentication successful for node ${hostname}:${port} (UUID: ${registrationUuid})`);
-          authenticated = true;
-        } else {
-          logger.warn(`Invalid UUID format for node ${hostname}:${port}: ${registrationUuid}`);
-          return res.status(401).json({ error: "Invalid UUID format" });
-        }
-      }
-
-      // Method 2: Tapis User ID authentication (simple and reliable)
-      else if (tapisJobOwner) {
-        logger.info(`Using Tapis User ID authentication for node ${hostname}:${port} (user: ${tapisJobOwner})`);
-        authenticated = true;
-      }
-
-      // Method 3: Tapis JWT token authentication (fallback for compatibility)
-      else if (effectiveTapisToken) {
+      if (effectiveTapisToken) {
         try {
-          const asrProvider = require('./libs/asrProvider');
-          const provider = asrProvider.get();
-
-          if (provider && provider.getDriverName && provider.getDriverName() === 'tapis') {
-            logger.info(`Validating Tapis JWT token for node ${hostname}:${port}`);
-            await provider.validateToken(effectiveTapisToken);
-            authenticated = true;
-            logger.info(`Tapis JWT token validation successful for ${hostname}:${port}`);
-          } else {
-            logger.warn(`Tapis token provided but no Tapis ASR provider available`);
-            return res.status(400).json({ error: "Tapis token provided but Tapis provider not configured" });
+          await validateTapisToken(effectiveTapisToken);
+          validatedIdentity = identityFromPayload(decodeJwtPayload(effectiveTapisToken));
+          if (!validatedIdentity) {
+            return res.status(401).json({ error: "Invalid Tapis token" });
           }
-        } catch (e) {
-          logger.warn(`Tapis JWT token validation failed for ${hostname}:${port}: ${e.message}`);
-          return res.status(401).json({ error: `Tapis token validation failed: ${e.message}` });
+          authMethod = "tapis-jwt";
+        } catch (error) {
+          if (error && error.code === "TAPIS_PROVIDER_UNAVAILABLE") {
+            logger.error(`Tapis provider unavailable while validating node registration for ${hostname}:${port}`);
+            return res.status(503).json({ error: "Authentication service unavailable" });
+          }
+          logger.warn(`Rejected invalid Tapis registration credential for ${hostname}:${port}`);
+          return res.status(401).json({ error: "Invalid Tapis token" });
         }
+      } else if (options.registrationSecret && safeStringEqual(registrationSecret, options.registrationSecret)) {
+        authMethod = "registration-secret";
+      } else {
+        logger.warn(`Node registration rejected because no valid credential was supplied for ${hostname}:${port}`);
+        return res.status(401).json({ error: "Authentication required" });
       }
 
-      // Method 2: Registration secret authentication (fallback)
-      if (!authenticated && options.registrationSecret) {
-        if (registrationSecret !== options.registrationSecret) {
-          logger.warn(`Invalid registration secret from ${hostname}:${port}`);
-          return res.status(401).json({ error: "Invalid registration secret" });
-        }
-        authenticated = true;
-        logger.info(`Registration secret validation successful for ${hostname}:${port}`);
-      }
-
-      // Method 3: No authentication required (if no secret configured)
-      if (!authenticated && !options.registrationSecret) {
-        authenticated = true;
-        logger.info(`No authentication required for ${hostname}:${port}`);
-      }
-
-      // If authentication is required but not provided
-      if (!authenticated) {
-        logger.warn(`Authentication required but not provided for ${hostname}:${port}`);
-        return res.status(401).json({
-          error: "Authentication required: provide 'registrationUuid', 'tapisToken', or 'registrationSecret'"
-        });
+      if (validatedIdentity && tapisJobOwner && !ownerMatchesIdentity(tapisJobOwner, validatedIdentity)) {
+        logger.warn(`Node registration owner mismatch for ${hostname}:${port}`);
+        return res.status(403).json({ error: "Registration owner mismatch" });
       }
 
       // Check if this is a Tapis node that was pre-created and needs data transfer
       let tapisNode = null;
       let registeredNodeUser = null;
 
-      // Extract user information - prefer job owner, fall back to JWT token
-      if (tapisJobOwner) {
-        // Simple user ID authentication
+      if (validatedIdentity) {
+        registeredNodeUser = validatedIdentity;
+        logger.info(`Using validated Tapis identity for node matching: ${registeredNodeUser.fullUser}`);
+      } else if (tapisJobOwner) {
         registeredNodeUser = {
           username: tapisJobOwner,
           tenantId: 'portals', // Default tenant for TACC
           fullUser: `${tapisJobOwner}@portals`
         };
         logger.info(`Using Tapis job owner for user matching: ${registeredNodeUser.fullUser}`);
-      } else if (effectiveTapisToken) {
-        // JWT token authentication (fallback)
-        try {
-          const asrProvider = require('./libs/asrProvider');
-          const provider = asrProvider.get();
-          if (provider && provider.extractUserFromToken) {
-            registeredNodeUser = provider.extractUserFromToken(effectiveTapisToken);
-            logger.info(`Extracted user from Tapis token: ${registeredNodeUser ? registeredNodeUser.fullUser : 'none'}`);
-          }
-        } catch (e) {
-          logger.warn(`Failed to extract user from Tapis token: ${e.message}`);
-        }
       }
+
+      registrationMeta.tapisJobOwner = tapisJobOwner || (validatedIdentity && validatedIdentity.fullUser) || null;
 
       if (isPrimaryTapisRegistration) {
         logger.info(`Looking for pre-created TapisNode with job UUID: ${tapisJobUuid}`);
@@ -923,7 +967,7 @@ module.exports = {
                     maxContentLength: Infinity
                   });
 
-                  logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
+                  logger.info(`[TAPIS DEBUG] NodeODM response received (status=${response.status})`);
 
                   const taskUuid = response.data?.uuid;
                   if (clusterTaskUuid && taskUuid && taskUuid !== clusterTaskUuid) {
@@ -932,7 +976,7 @@ module.exports = {
 
                   const effectiveUuid = clusterTaskUuid || taskUuid;
                   if (!effectiveUuid) {
-                    logger.error(`[TAPIS DEBUG] No task UUID in response. Response structure:`, JSON.stringify(response.data, null, 2));
+                    logger.error(`[TAPIS DEBUG] No task UUID in NodeODM response`);
                     throw new Error('NodeODM response missing task UUID');
                   }
 
@@ -969,7 +1013,7 @@ module.exports = {
               message: "Tapis placeholder node updated with real NodeODM",
               nodeId: nodes.all().indexOf(tapisNode) + 1,
               tapisJobUuid: tapisJobUuid,
-              authMethod: registrationUuid ? "uuid" : (tapisJobOwner ? "tapis-user-id" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret"))
+              authMethod
             });
             return;
           } catch (e) {
@@ -1077,7 +1121,7 @@ module.exports = {
                     checkpointResume: true,
                     resumeMode: resumeMode || "restored",
                     resumeFallbackReason: resumeFallbackReason || null,
-                    authMethod: registrationUuid ? "uuid" : (tapisJobOwner ? "tapis-user-id" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret"))
+                    authMethod
                   });
                   return;
                 } catch (routeErr) {
@@ -1165,7 +1209,7 @@ module.exports = {
                     maxContentLength: Infinity
                   });
 
-                  logger.info(`[TAPIS DEBUG] NodeODM response:`, JSON.stringify(response.data, null, 2));
+                  logger.info(`[TAPIS DEBUG] NodeODM response received (status=${response.status})`);
 
                   const taskUuid = response.data?.uuid;
                   if (clusterTaskUuid && taskUuid && taskUuid !== clusterTaskUuid) {
@@ -1174,7 +1218,7 @@ module.exports = {
 
                   const effectiveUuid = clusterTaskUuid || taskUuid;
                   if (!effectiveUuid) {
-                    logger.error(`[TAPIS DEBUG] No task UUID in response. Response structure:`, JSON.stringify(response.data, null, 2));
+                    logger.error(`[TAPIS DEBUG] No task UUID in NodeODM response`);
                     throw new Error('NodeODM response missing task UUID');
                   }
 
@@ -1220,7 +1264,7 @@ module.exports = {
                 message: "NodeODM registered and task submitted",
                 nodeId: nodes.all().indexOf(node) + 1,
                 tapisJobUuid: tapisJobUuid,
-                authMethod: registrationUuid ? "uuid" : (tapisJobOwner ? "tapis-user-id" : (effectiveTapisToken ? "tapis-jwt" : "registration-secret"))
+                authMethod
               });
               return;
             }
@@ -1244,7 +1288,7 @@ module.exports = {
           success: true,
           message: "Node registered successfully",
           nodeId: nodes.all().indexOf(node) + 1,
-          authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
+          authMethod
         });
       } else {
         logger.warn(`Node ${hostname}:${port} already exists or invalid`);
@@ -1271,65 +1315,27 @@ module.exports = {
 
       logger.info(`Node de-registration request from ${hostname || 'unknown'}:${port || 'unknown'}`);
 
-      // Authentication validation (same as registration)
-      let authenticated = false;
-
-      // Method 1: UUID-based authentication (simple and reliable for Tapis jobs)
-      if (registrationUuid) {
-        // Simple UUID validation - check if it's a valid UUID format
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (uuidRegex.test(registrationUuid)) {
-          logger.info(`UUID authentication successful for de-registration ${hostname}:${port} (UUID: ${registrationUuid})`);
-          authenticated = true;
-        } else {
-          logger.warn(`Invalid UUID format for de-registration ${hostname}:${port}: ${registrationUuid}`);
-          return res.status(401).json({ error: "Invalid UUID format" });
-        }
-      }
-
-      // Method 2: Tapis JWT token authentication (fallback for compatibility)
-      else if (effectiveTapisToken) {
+      let authMethod = null;
+      let validatedIdentity = null;
+      if (effectiveTapisToken) {
         try {
-          const asrProvider = require('./libs/asrProvider');
-          const provider = asrProvider.get();
-
-          if (provider && provider.getDriverName && provider.getDriverName() === 'tapis') {
-            logger.info(`Validating Tapis JWT token for node de-registration ${hostname}:${port}`);
-            await provider.validateToken(effectiveTapisToken);
-            authenticated = true;
-            logger.info(`Tapis JWT token validation successful for de-registration ${hostname}:${port}`);
-          } else {
-            logger.warn(`Tapis token provided but no Tapis ASR provider available`);
-            return res.status(400).json({ error: "Tapis token provided but Tapis provider not configured" });
+          await validateTapisToken(effectiveTapisToken);
+          validatedIdentity = identityFromPayload(decodeJwtPayload(effectiveTapisToken));
+          if (!validatedIdentity) return res.status(401).json({ error: "Invalid Tapis token" });
+          authMethod = "tapis-jwt";
+        } catch (error) {
+          if (error && error.code === "TAPIS_PROVIDER_UNAVAILABLE") {
+            logger.error(`Tapis provider unavailable while validating node de-registration for ${hostname || "unknown"}:${port || "unknown"}`);
+            return res.status(503).json({ error: "Authentication service unavailable" });
           }
-        } catch (e) {
-          logger.warn(`Tapis JWT token validation failed for de-registration ${hostname}:${port}: ${e.message}`);
-          return res.status(401).json({ error: `Tapis token validation failed: ${e.message}` });
+          logger.warn(`Rejected invalid Tapis de-registration credential for ${hostname || "unknown"}:${port || "unknown"}`);
+          return res.status(401).json({ error: "Invalid Tapis token" });
         }
-      }
-
-      // Method 2: Registration secret authentication (fallback)
-      if (!authenticated && options.registrationSecret) {
-        if (registrationSecret !== options.registrationSecret) {
-          logger.warn(`Invalid registration secret for de-registration from ${hostname}:${port}`);
-          return res.status(401).json({ error: "Invalid registration secret" });
-        }
-        authenticated = true;
-        logger.info(`Registration secret validation successful for de-registration ${hostname}:${port}`);
-      }
-
-      // Method 3: No authentication required (if no secret configured)
-      if (!authenticated && !options.registrationSecret) {
-        authenticated = true;
-        logger.info(`No authentication required for de-registration ${hostname}:${port}`);
-      }
-
-      // If authentication is required but not provided
-      if (!authenticated) {
-        logger.warn(`Authentication required but not provided for de-registration ${hostname}:${port}`);
-        return res.status(401).json({
-          error: "Authentication required: provide 'registrationUuid', 'tapisToken', or 'registrationSecret'"
-        });
+      } else if (options.registrationSecret && safeStringEqual(registrationSecret, options.registrationSecret)) {
+        authMethod = "registration-secret";
+      } else {
+        logger.warn(`Node de-registration rejected because no valid credential was supplied for ${hostname || "unknown"}:${port || "unknown"}`);
+        return res.status(401).json({ error: "Authentication required" });
       }
 
       // Find node to remove
@@ -1357,6 +1363,15 @@ module.exports = {
         return res.status(400).json({ error: "Must provide either 'nodeId' or 'hostname' and 'port'" });
       }
 
+      if (authMethod === "tapis-jwt") {
+        const nodeOwner = nodeToRemove.nodeData && nodeToRemove.nodeData.tapisJobOwner;
+        const nodeIdentity = nodeOwner || nodeToRemove.nodeUser;
+        if (!ownerMatchesIdentity(nodeIdentity, validatedIdentity)) {
+          logger.warn(`Tapis identity is not authorized to de-register ${nodeToRemove.hostname()}:${nodeToRemove.port()}`);
+          return res.status(403).json({ error: "Not authorized to de-register this node" });
+        }
+      }
+
       // Remove the node
       const success = nodes.remove(nodeToRemove);
 
@@ -1382,7 +1397,7 @@ module.exports = {
           success: true,
           message: "Node de-registered successfully",
           nodeInfo: nodeInfo,
-          authMethod: registrationUuid ? "uuid" : (tapisToken ? "tapis-jwt" : "registration-secret")
+          authMethod
         });
       } else {
         logger.error(`Failed to remove node ${nodeToRemove.hostname()}:${nodeToRemove.port()}`);
@@ -1393,7 +1408,13 @@ module.exports = {
       }
     });
 
-    app.listen(options.port);
+    return new Promise((resolve, reject) => {
+      const onListen = () => resolve(server);
+      const server = options.host
+        ? app.listen(options.port, options.host, onListen)
+        : app.listen(options.port, onListen);
+      server.once("error", reject);
+    });
   },
 };
 

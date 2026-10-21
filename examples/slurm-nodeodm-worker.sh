@@ -41,7 +41,7 @@ fi
 echo "Configuration:"
 echo "  Cluster: $CLUSTER_HOST:$CLUSTER_PORT"
 echo "  Node: $NODE_HOST:$NODE_PORT"
-echo "  Auth: $([ -n "$TAPIS_TOKEN" ] && echo "Tapis JWT" || [ -n "$REGISTRATION_SECRET" ] && echo "Secret" || echo "none")"
+echo "  Auth: $([ -n "$TAPIS_TOKEN" ] && echo "Tapis JWT" || echo "Secret")"
 echo ""
 
 # Function to cleanup on exit

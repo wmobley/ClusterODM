@@ -65,9 +65,13 @@ Or with apptainer, after cd into ClusterODM directory:
 apptainer run docker://opendronemap/clusterodm [parameters]
 ```
 
-Then connect to the CLI and connect new [NodeODM](https://github.com/OpenDroneMap/NodeODM) instances:
+The admin CLI is disabled unless you provide `--admin-pass`. When enabled, it listens on
+loopback, so use an SSH tunnel for remote administration:
 
 ```bash
+node index.js --admin-pass 'replace-with-a-strong-password'
+
+# In another terminal on the same host (or through an SSH tunnel):
 telnet localhost 8080
 > HELP
 > NODE ADD nodeodm-host 3001
@@ -87,16 +91,18 @@ ClusterODM-Tapis integrates with TACC's supercomputing resources via the Tapis A
 ### Prerequisites
 
 1. **Tapis Account**: Valid account on TACC's Tapis system
-2. **JWT Token**: Current authentication token for API access
+2. **Request authentication**: WebODM supplies a current Tapis token with each task request.
+   An optional `TAPIS_TOKEN` or mounted `TAPIS_TOKEN_FILE` may be used for a startup preflight.
 3. **NodeODM App**: `nodeodm-ls62` app deployed on Lonestar6
-4. **Configuration File**: `tapis-config.json` with your credentials
+4. **Configuration File**: `tapis-config.json` without credentials
 
 ### Quick Start
 
-1. **Configure Tapis credentials**:
+1. **Configure Tapis**:
 ```bash
 cp tapis-config-sample.json tapis-config.json
-# Edit tapis-config.json with your JWT token
+# Optional startup preflight only:
+export TAPIS_TOKEN_FILE=/run/secrets/tapis-token
 ```
 
 2. **Start ClusterODM-Tapis**:
@@ -118,8 +124,7 @@ The `tapis-config.json` file controls HPC resource allocation:
 {
   "tapis": {
     "baseUrl": "https://portals.tapis.io",
-    "tenantId": "portals",
-    "token": "YOUR_JWT_TOKEN"
+    "tenantId": "portals"
   },
   "app": {
     "appId": "nodeodm-ls62",
@@ -153,7 +158,7 @@ The `tapis-config.json` file controls HPC resource allocation:
 ### Monitoring
 
 - **Web Interface**: `http://localhost:10000` - Node status and management
-- **CLI Interface**: `telnet localhost 8080` - Administrative commands
+- **CLI Interface**: `telnet localhost 8080` after starting with `--admin-pass`; the CLI is loopback-only
 - **Logs**: `clusterodm-tapis.log` - Detailed processing logs
 
 ## Autoscale Setup
@@ -182,7 +187,7 @@ info: Found docker-machine executable
 You should always have at least one static NodeODM node attached to ClusterODM, even if you plan to use the autoscaler for all processing. If you setup auto scaling, you can't have zero nodes and rely 100% on the autoscaler. You need to attach a NodeODM node to act as the "reference node" otherwise ClusterODM will not know how to handle certain requests (for the forwarding the UI, for validating options prior to spinning up an instance, etc.). For this purpose, you should add a "dummy" NodeODM node and lock it:
 
 ```
-telnet localhost 8080
+telnet localhost 8080  # requires --admin-pass
 > NODE ADD localhost 3001
 > NODE LOCK 1
 > NODE LIST
@@ -238,7 +243,7 @@ squeue -u $USER
 Unfortunately, SLURM does not handle assigning jobs to the head node. Hence, if we want to run ClusterODM on the head node, we have to run it locally. After that, you can connect to the CLI and wire the NodeODMs to the ClusterODMs. Here is an example following the sample SLURM script:
 
 ```
-telnet localhost 8080
+telnet localhost 8080  # requires --admin-pass
 > NODE ADD node48 3000
 > NODE ADD node50 3000
 > NODE ADD node51 3000
