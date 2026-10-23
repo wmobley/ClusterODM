@@ -418,7 +418,14 @@ For non-Tapis environments or fallback authentication:
 
 ### Network Security
 
-- The webhook endpoint is exposed on the admin web port (default: 10000)
+- The webhook endpoint is exposed on the admin web port (default: 10000).
+- When publishing ClusterODM through nginx, `/auth/`, `/r/`, `/signout`, and
+  `/webhook` must be proxied to the admin web port, not the main task proxy
+  port (3000). The repository's `clusterodm-nginx.conf` includes these
+  locations. After installing or changing it, validate and reload nginx
+  (`nginx -t && systemctl reload nginx`). A misrouted deployment returns the
+  main proxy's `Cannot handle /webhook...` or `Cannot handle /auth/config`
+  response even though the admin web process contains those routes.
 - Consider firewall rules to restrict access to trusted networks
 - Use HTTPS in production (configure SSL certificates)
 
